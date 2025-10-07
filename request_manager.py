@@ -15,18 +15,19 @@ def check_success(response, elapsed, args):
 
     # A list of conditions to check. The first one to be true determines success.
     conditions = [
-        (args.regex and re.search(args.regex, response_text)),
-        (args.expect_text and args.expect_text in response_text),
-        (args.text and args.text not in response_text),
-        (args.code and response.status_code == args.code),
-        (args.length and len(response_text) == args.length),
-        (args.time and elapsed >= args.time),
+        bool(getattr(args, 'regex', None) and re.search(args.regex, response_text)),
+        # include/exclude text with backward-compatible aliases
+        bool(getattr(args, 'include_text', None) and args.include_text in response_text),
+        bool(getattr(args, 'exclude_text', None) and args.exclude_text not in response_text),
+        bool(getattr(args, 'code', None) and response.status_code == args.code),
+        bool(getattr(args, 'length', None) and len(response_text) == args.length),
+        bool(getattr(args, 'time', None) and elapsed >= args.time),
     ]
 
     return any(conditions)
 
 
-def make_attempt(url, payload, increment_value, args, session):
+def make_attempt(url, payload, attempt_id, args, session):
     """Executes a single brute-force attempt."""
     
     headers = {}
@@ -43,8 +44,8 @@ def make_attempt(url, payload, increment_value, args, session):
             body_params[key] = value
 
     # Handle incrementing fields
-    if increment_value is not None:
-        counter_str = str(increment_value)
+    if attempt_id is not None:
+        counter_str = str(attempt_id)
         for field in args.increment_fields:
             if field.startswith("header:"):
                 headers[field[7:]] = counter_str
@@ -83,7 +84,7 @@ def make_attempt(url, payload, increment_value, args, session):
         if args.delay > 0:
             sleep(args.delay)
 
-        return payload, increment_value, response, elapsed
+        return payload, attempt_id, response, elapsed
 
     except requests.RequestException as e:
-        return payload, increment_value, None, 0, str(e)
+        return payload, attempt_id, None, 0.0, str(e)

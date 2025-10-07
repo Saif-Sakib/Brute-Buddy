@@ -1,8 +1,0 @@
-This structure makes it easy to extend the tool. Here are some examples:
-
-New Payload Types: Add new payload generation logic to payload_handler.py (e.g., custom wordlist generators or external API-based payloads).
-Custom Authentication: Extend auth_handler.py to support OAuth, JWT, or multi-step authentication.
-Additional Success Criteria: Modify is_success in request_handler.py to include new conditions (e.g., regex matching or JSON response parsing).
-Request Methods: Add support for GET, PUT, or other HTTP methods in request_handler.py.
-Logging/Reporting: Add a logging module to save results to a file or database.
-Rate Limiting: Enhance request_handler.py to implement adaptive rate limiting based on server responses.

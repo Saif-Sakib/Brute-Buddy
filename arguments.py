@@ -11,7 +11,7 @@ def parse_arguments():
               1. Basic username/password brute-force:
                  python run.py https://example.com/login \\
                    --param username=users.txt --param password="admin123" \\
-                   --expect-text 'Welcome' --threads 10
+                   --include-text 'Welcome' --threads 10
 
               2. MFA code generation with an incrementing header:
                  python run.py https://example.com/mfa \\
@@ -23,7 +23,7 @@ def parse_arguments():
               3. Zipping usernames and passwords:
                  python run.py https://example.com/auth \\
                    --param username=users.txt --param password=passes.txt \\
-                   --zip-fields username,password --text 'Invalid'
+                   --zip-fields username,password --exclude-text 'Invalid'
         '''),
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
@@ -34,7 +34,7 @@ def parse_arguments():
     # Parameter specifications
     param_group = parser.add_argument_group('Parameter Options')
     param_group.add_argument("--param", action="append",
-                             help="Define a parameter for the request. Can be a file (e.g., user=users.txt), generated payload (e.g., code=generate:0-9:6), constant (e.g., role=guest), or incrementing value (e.g., increment:id). Use 'header:' or 'cookie:' prefix to target headers or cookies.")
+                             help="Define a parameter for the request. Repeatable. Accepts file (user=users.txt), generated (code=generate:0-9:6), constant (role=guest), or increment (increment:field). Prefix with header:/cookie: to target headers/cookies.")
     param_group.add_argument("--cookie", action="append",
                              help="Shorthand for --param cookie:name=source.")
     param_group.add_argument("--zip-fields",
@@ -58,8 +58,12 @@ def parse_arguments():
 
     # Success criteria
     success_group = parser.add_argument_group('Success Criteria (first match wins)')
-    success_group.add_argument("--expect-text", help="Text expected in the response for success.")
-    success_group.add_argument("--text", help="Text that should NOT be in the response for success.")
+    # New, clearer flags
+    success_group.add_argument("--include-text", help="Success if this text IS present in the response.")
+    success_group.add_argument("--exclude-text", help="Success if this text is NOT present in the response.")
+    # Backward-compatible (deprecated) aliases
+    success_group.add_argument("--expect-text", help="[Deprecated: use --include-text] Text expected in the response for success.")
+    success_group.add_argument("--text", help="[Deprecated: use --exclude-text] Text that should NOT be in the response for success.")
     success_group.add_argument("--regex", help="Regex pattern to match in the response for success.")
     success_group.add_argument("--code", type=int, help="HTTP status code for success.")
     success_group.add_argument("--length", type=int, help="Exact response body length for success.")
@@ -91,4 +95,14 @@ def parse_arguments():
     output_group.add_argument("--stop-on-success", action="store_true",
                               help="Stop the attack after the first successful attempt.")
 
-    return parser.parse_args()
+    args = parser.parse_args()
+
+    # Backward-compatibility and deprecation notices for text flags
+    if getattr(args, 'include_text', None) is None and getattr(args, 'expect_text', None):
+        args.include_text = args.expect_text
+        print("[!] --expect-text is deprecated; use --include-text instead.", flush=True)
+    if getattr(args, 'exclude_text', None) is None and getattr(args, 'text', None):
+        args.exclude_text = args.text
+        print("[!] --text is deprecated; use --exclude-text instead.", flush=True)
+
+    return args
