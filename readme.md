@@ -1,7 +1,3 @@
-Below is an updated and comprehensive `README.md` for the **Brute Buddy**, based on the provided draft and expanded with additional details for clarity, functionality, and usability. This version enhances the original structure, refines descriptions, and adds practical examples and tips.
-
----
-
 # Brute Buddy
 
 The **Brute Buddy** is a versatile and robust tool crafted for security researchers and penetration testers to assess the strength of web applications against brute-force attacks. With support for multi-field brute-forcing, dynamic payload generation, re-authentication, and highly customizable success criteria, it’s an ideal choice for testing authentication endpoints, headers, cookies, and more.
