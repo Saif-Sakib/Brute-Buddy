@@ -39,81 +39,9 @@ Define success using one or more conditions:
 - **Text Presence**: Check for specific text in the response (e.g., `--expect-text "Welcome"`).
 - **Text Absence**: Ensure certain text is absent (e.g., `--no-text "Unauthorized"`).
 - **HTTP Status Code**: Match a specific code (e.g., `--code 200`).
-- **Response Length**: Verify an exact response body length (e.g., `--length 500`).
-- **Response Time**: Flag success if the response time exceeds a threshold (e.g., `--time 2.0` for 2 seconds).
-
-### Advanced Options
-- **Multi-Threading**: Control concurrency with `--threads` to optimize speed without overwhelming the target.
-- **Request Delay**: Add a delay between requests (e.g., `--delay 0.5` for 0.5 seconds) to evade detection or rate limits.
-- **Retries**: Retry failed requests up to a specified limit (e.g., `--retries 3`).
-- **Proxy Support**: Route traffic through a proxy (e.g., `--proxy http://localhost:8080`) for monitoring or bypassing restrictions.
-- **SSL Verification**: Disable SSL certificate checks with `--no-verify` (warnings suppressed for cleaner output).
-- **Verbose Mode**: Enable detailed logging with `--verbose` to track each attempt’s request and response.
-
----
-
-## Installation
-
-To set up the **Brute Buddy**, follow these steps:
-
-1. **Clone or Download the Repository**:
-   - Clone using Git:
-     ```bash
-     git clone https://github.com/Saif-Sakib/Brute-Buddy.git
-     ```
-   - Or download the ZIP file and extract it.
-
-2. **Install Dependencies**:
-   - Ensure Python 3.x is installed.
-   - Install required libraries:
-     ```bash
-     pip install requests urllib3
-     ```
-
-3. **Run the Tool**:
-   - Navigate to the project directory and check available options:
-     ```bash
-     python run.py --help
-     ```
-
----
-
-## Usage Examples
-
-Below are practical examples to demonstrate the tool’s capabilities:
-
-### Example 1: Basic Username and Password Brute-Force
-```bash
-python run.py https://example.com/login \
-  --param username=usernames.txt \
-  --param password=passwords.txt \
-  --expect-text "Welcome" \
-  --threads 10
-```
-- Brute-forces usernames and passwords from files.
-- Looks for "Welcome" in the response to identify success.
-- Uses 10 concurrent threads.
-
-### Example 2: Generated Payloads with Re-Authentication
-```bash
-python run.py https://example.com/mfa \
-  --param mfa-code=generate:0123456789:6 \
-  --param increment:header:X-Request-ID \
-  --code 200 \
-  --reauth 100 \
-  --login-url https://example.com/login \
-  --username admin \
-  --password pass123
-```
-- Generates 6-digit MFA codes using digits 0-9.
-- Adds an incrementing `X-Request-ID` header.
-- Expects a 200 status code.
-- Re-authenticates every 100 failed attempts.
-
-````markdown
 # Brute Buddy
 
-Brute Buddy is a versatile and robust tool for security researchers and penetration testers to assess the strength of web applications against brute-force attacks. It supports multi-field brute-forcing, dynamic payload generation, re-authentication, and customizable success criteria for testing forms, headers, cookies, and more.
+Brute Buddy is a versatile tool for security researchers and penetration testers to assess the strength of web applications against brute-force attacks. It supports multi-field brute-forcing, dynamic payload generation, re-authentication, and customizable success criteria for testing forms, headers, cookies, and more.
 
 ---
 
@@ -125,7 +53,7 @@ Brute Buddy is a versatile and robust tool for security researchers and penetrat
 - Constant and incrementing fields (e.g., `--param increment:header:X-Request-ID`).
 - Re-authentication support with `--reauth` and `--login-url/--username/--password`.
 - Success criteria by regex, expected text, absence of text, status code, response length, or time.
-- Multi-threading, retries, proxy support, JSON body requests, and optional output to file.
+- Multi-threading, retries, proxy support, JSON body requests, optional output file, early stop.
 
 ---
 
@@ -136,10 +64,12 @@ Brute Buddy is a versatile and robust tool for security researchers and penetrat
    ```bash
    pip install -r requirements.txt
    ```
-3. Show help and examples:
+3. Show help:
    ```bash
    python run.py --help
    ```
+
+See `USAGE.md` for a full feature guide with more examples.
 
 ---
 
@@ -155,7 +85,7 @@ Brute Buddy is a versatile and robust tool for security researchers and penetrat
   - `--product-fields FIELD [FIELD ...]` Cartesian product for listed fields (default for all if unspecified).
   - `--max-attempts N` limit total attempts (0 = unlimited).
 - Authentication:
-  - `--login-url`, `--username`, `--password`, optional `--auth-header KEY=VAL` (repeatable), `--reauth N`.
+  - `--login-url`, `--username`, `--password`, optional `--auth-header KEY=VAL` (repeatable), `--auth-cookie-name NAME`, `--reauth N`.
 - Success criteria:
   - `--regex PATTERN`, `--expect-text TEXT`, `--text TEXT`, `--code INT`, `--length INT`, `--time SEC`.
 - Performance/network:
@@ -228,5 +158,4 @@ python run.py https://example.com/login \
 ## License
 
 MIT
-
-````
+- Performance/network:
