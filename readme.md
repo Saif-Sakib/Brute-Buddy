@@ -1,10 +1,10 @@
-Below is an updated and comprehensive `README.md` for the **Ultimate Brute Forcer**, based on the provided draft and expanded with additional details for clarity, functionality, and usability. This version enhances the original structure, refines descriptions, and adds practical examples and tips.
+Below is an updated and comprehensive `README.md` for the **Brute Buddy**, based on the provided draft and expanded with additional details for clarity, functionality, and usability. This version enhances the original structure, refines descriptions, and adds practical examples and tips.
 
 ---
 
-# Ultimate Brute Forcer
+# Brute Buddy
 
-The **Ultimate Brute Forcer** is a versatile and robust tool crafted for security researchers and penetration testers to assess the strength of web applications against brute-force attacks. With support for multi-field brute-forcing, dynamic payload generation, re-authentication, and highly customizable success criteria, it’s an ideal choice for testing authentication endpoints, headers, cookies, and more.
+The **Brute Buddy** is a versatile and robust tool crafted for security researchers and penetration testers to assess the strength of web applications against brute-force attacks. With support for multi-field brute-forcing, dynamic payload generation, re-authentication, and highly customizable success criteria, it’s an ideal choice for testing authentication endpoints, headers, cookies, and more.
 
 ---
 
@@ -54,12 +54,12 @@ Define success using one or more conditions:
 
 ## Installation
 
-To set up the **Ultimate Brute Forcer**, follow these steps:
+To set up the **Brute Buddy**, follow these steps:
 
 1. **Clone or Download the Repository**:
    - Clone using Git:
      ```bash
-     git clone https://github.com/yourusername/ultimate-brute-forcer.git
+     git clone https://github.com/Saif-Sakib/Brute-Buddy.git
      ```
    - Or download the ZIP file and extract it.
 
