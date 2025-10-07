@@ -1,67 +1,94 @@
 import argparse
+import textwrap
 
 
 def parse_arguments():
     """Parse and return command-line arguments."""
     parser = argparse.ArgumentParser(
         description="A user-friendly brute-force tool with re-authentication support.",
-        epilog="Run 'python run.py --help' for detailed usage and examples.",
+        epilog=textwrap.dedent('''\
+            Examples:
+              1. Basic username/password brute-force:
+                 python run.py https://example.com/login \\
+                   --param username=users.txt --param password="admin123" \\
+                   --expect-text 'Welcome' --threads 10
+
+              2. MFA code generation with an incrementing header:
+                 python run.py https://example.com/mfa \\
+                   --param mfa-code=generate:0123456789:6 \\
+                   --param increment:header:X-Request-ID --code 200 \\
+                   --reauth 100 --login-url https://example.com/login \\
+                   --username admin --password pass123
+
+              3. Zipping usernames and passwords:
+                 python run.py https://example.com/auth \\
+                   --param username=users.txt --param password=passes.txt \\
+                   --zip-fields username,password --text 'Invalid'
+        '''),
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    
+
     # Required arguments
-    parser.add_argument("url", help="Target URL to brute-force (e.g., https://example.com/login)")
-    
+    parser.add_argument("url", help="Target URL to brute-force.")
+
     # Parameter specifications
-    parser.add_argument("--param", action="append",
-                        help="Parameter specification: key=source (e.g., username=user.txt, password=\"secret\", header:X-API-Key=keys.txt, increment:counter)")
-    parser.add_argument("--cookie", action="append",
-                        help="Cookie specification: name=source (e.g., session=cookies.txt)")
-    
-    # Combination strategies
-    parser.add_argument("--zip-fields", action="append",
-                        help="Fields to combine with zip (e.g., username, password)")
-    parser.add_argument("--product-fields", action="append",
-                        help="Fields to combine with product (e.g., username, password)")
-    
+    param_group = parser.add_argument_group('Parameter Options')
+    param_group.add_argument("--param", action="append",
+                             help="Define a parameter for the request. Can be a file (e.g., user=users.txt), generated payload (e.g., code=generate:0-9:6), constant (e.g., role=guest), or incrementing value (e.g., increment:id). Use 'header:' or 'cookie:' prefix to target headers or cookies.")
+    param_group.add_argument("--cookie", action="append",
+                             help="Shorthand for --param cookie:name=source.")
+    param_group.add_argument("--zip-fields",
+                             help="Comma-separated fields to zip together (e.g., username,password).")
+    param_group.add_argument("--product-fields",
+                             help="Comma-separated fields to combine in a product (default for all brute-force fields).")
+    param_group.add_argument("--max-attempts", type=int, default=0,
+                             help="Stop after this many attempts (0 for no limit).")
+
     # Authentication
-    parser.add_argument("--login-url", help="URL for re-authentication")
-    parser.add_argument("--username", help="Username for re-authentication")
-    parser.add_argument("--password", help="Password for re-authentication")
-    parser.add_argument("--auth-header", action="append",
-                        help="Custom header for authentication (e.g., X-API-Key=value)")
-    parser.add_argument("--reauth", type=int, default=0,
-                        help="Re-authenticate after this many failures (0 = disabled)")
-    parser.add_argument("--auth-cookie-name", default="session",
-                        help="Cookie name to extract from the authentication response (default: session)")
-    
+    auth_group = parser.add_argument_group('Authentication')
+    auth_group.add_argument("--login-url", help="URL for re-authentication.")
+    auth_group.add_argument("--username", help="Username for re-authentication.")
+    auth_group.add_argument("--password", help="Password for re-authentication.")
+    auth_group.add_argument("--auth-header", action="append",
+                            help="Custom header for authentication (e.g., 'Key:Value'). Can be specified multiple times.")
+    auth_group.add_argument("--reauth", type=int, default=0,
+                            help="Re-authenticate after this many consecutive failures (0 to disable).")
+    auth_group.add_argument("--auth-cookie-name", default="session",
+                            help="Cookie name to extract from auth response (default: session).")
+
     # Success criteria
-    parser.add_argument("--text", help="Text indicating failure (not present = success)")
-    parser.add_argument("--expect-text", help="Text indicating success (present = success)")
-    parser.add_argument("--regex", help="Regex pattern indicating success (match = success)")
-    parser.add_argument("--code", type=int, help="Success HTTP status code")
-    parser.add_argument("--length", type=int, help="Success response length")
-    parser.add_argument("--time", type=float, help="Minimum response time for success")
-    
+    success_group = parser.add_argument_group('Success Criteria (first match wins)')
+    success_group.add_argument("--expect-text", help="Text expected in the response for success.")
+    success_group.add_argument("--text", help="Text that should NOT be in the response for success.")
+    success_group.add_argument("--regex", help="Regex pattern to match in the response for success.")
+    success_group.add_argument("--code", type=int, help="HTTP status code for success.")
+    success_group.add_argument("--length", type=int, help="Exact response body length for success.")
+    success_group.add_argument("--time", type=float, help="Response time >= this value for success.")
+
     # Performance settings
-    parser.add_argument("--threads", type=int, default=5, help="Number of threads (default: 5)")
-    parser.add_argument("--delay", type=float, default=0.1, help="Delay between requests (default: 0.1s)")
-    parser.add_argument("--retries", type=int, default=3, help="Retries for failed requests (default: 3)")
-    
+    perf_group = parser.add_argument_group('Performance')
+    perf_group.add_argument("--threads", type=int, default=10, help="Number of concurrent threads (default: 10).")
+    perf_group.add_argument("--delay", type=float, default=0.0, help="Delay in seconds between requests (default: 0).")
+    perf_group.add_argument("--retries", type=int, default=3, help="Retries for HTTP errors (e.g., 5xx) (default: 3).")
+    perf_group.add_argument("--retry-backoff", type=float, default=0.2,
+                            help="Backoff factor for retries (default: 0.2).")
+    perf_group.add_argument("--per-payload-max-retries", type=int, default=5,
+                            help="Max retries for a payload on network errors (e.g., timeout) (default: 5, 0 for unlimited).")
+
     # Network settings
-    parser.add_argument("--proxy-url", help="Proxy URL (e.g., http://127.0.0.1:8080)")
-    parser.add_argument("--insecure", action="store_true", help="Skip SSL verification")
-    parser.add_argument("--method", default="POST", help="HTTP request method (e.g., GET, POST, PUT, DELETE, PATCH)")
-    parser.add_argument("--timeout", type=float, default=20, help="Request timeout in seconds (default: 20)")
-    parser.add_argument("--json-body", action="store_true",
-                        help="Send request body as JSON (overrides form-encoded body)")
-    
+    net_group = parser.add_argument_group('Network')
+    net_group.add_argument("--proxy-url", help="Proxy URL (e.g., http://127.0.0.1:8080).")
+    net_group.add_argument("--insecure", action="store_true", help="Skip SSL certificate verification.")
+    net_group.add_argument("--method", default="POST", help="HTTP request method (default: POST).")
+    net_group.add_argument("--timeout", type=float, default=10, help="Request timeout in seconds (default: 10).")
+    net_group.add_argument("--json-body", action="store_true",
+                           help="Send request body as JSON for POST/PUT/PATCH methods.")
+
     # Output settings
-    parser.add_argument("-v", "--verbose", action="store_true", help="Show detailed output")
-    parser.add_argument("--output", help="Write successful combinations to this file (JSON lines)")
-    parser.add_argument("--stop-on-success", action="store_true",
-                        help="Stop immediately after the first successful attempt")
-    parser.add_argument("--max-attempts", type=int, default=0,
-                        help="Maximum number of attempts to perform (0 = no limit)")
-    
+    output_group = parser.add_argument_group('Output')
+    output_group.add_argument("-v", "--verbose", action="store_true", help="Show detailed output for all attempts.")
+    output_group.add_argument("--output", help="File to save successful results to (JSON lines format).")
+    output_group.add_argument("--stop-on-success", action="store_true",
+                              help="Stop the attack after the first successful attempt.")
+
     return parser.parse_args()

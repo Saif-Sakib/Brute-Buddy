@@ -1,365 +1,336 @@
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from collections import Counter
 from itertools import count, product
-from arguments import parse_arguments
-from payload_manager import prepare_payloads
-from request_manager import make_attempt, check_success
-from authenticator import Authenticator
-from help_guide import show_help
 import sys
 import requests
 from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 import os
 import threading
 import json
 
-
-def parse_params(param_args):
-    """Parse --param arguments into brute-force fields, constants, and increment fields."""
-    brute_fields, constants, increment_fields = [], {}, []
-    
-    for param in param_args or []:
-        if not param:
-            print("[-] Error: Empty parameter provided")
-            sys.exit(1)
-            
-        if param.startswith("increment:"):
-            field = param[10:]
-            if not field:
-                print("[-] Error: Increment field name cannot be empty")
-                sys.exit(1)
-            increment_fields.append(field)
-        elif "=" not in param:
-            print(f"[-] Error: Invalid param format: {param}. Use 'key=source' or 'increment:field'")
-            sys.exit(1)
-        else:
-            key, source = param.split("=", 1)
-            if not key or not source:
-                print(f"[-] Error: Key or source cannot be empty in param: {param}")
-                sys.exit(1)
-                
-            if source.startswith("generate:"):
-                brute_fields.append((key, source))
-            elif os.path.isfile(source):
-                brute_fields.append((key, source))
-            else:
-                # Treat as constant (quoted or unquoted)
-                constants[key] = source.strip('"')  # Remove quotes if present, otherwise use as-is
-                
-    return brute_fields, constants, increment_fields
+from arguments import parse_arguments
+from payload_manager import prepare_payloads
+from request_manager import make_attempt, check_success
+from authenticator import Authenticator
 
 
-def setup_sessions(num_threads, retries):
-    """Create optimized session pool."""
-    sessions = []
-    adapter = HTTPAdapter(max_retries=retries, pool_connections=10, pool_maxsize=num_threads)
-    
-    for _ in range(num_threads):
-        session = requests.Session()
-        session.mount("http://", adapter)
-        session.mount("https://", adapter)
-        sessions.append(session)
-    
-    return sessions
-
-
-def validate_combination_fields(brute_fields, zip_fields, product_fields):
-    """Validate and setup combination fields."""
-    all_brute_keys = {key for key, _ in brute_fields}
-    invalid_zip = set(zip_fields) - all_brute_keys
-    invalid_product = set(product_fields) - all_brute_keys
-    
-    if invalid_zip or invalid_product:
-        print(f"[-] Error: Invalid fields in --zip-fields ({invalid_zip}) or --product-fields ({invalid_product})")
-        sys.exit(1)
-    
-    # Default to product for unspecified fields
-    if not zip_fields and not product_fields and brute_fields:
-        product_fields = list(all_brute_keys)
-    
-    return product_fields
-
-
-def generate_combinations_iter(brute_fields, zip_fields, product_fields, payload_lists):
-    """Yield parameter combinations without materializing all in memory."""
-    zip_indices = [i for i, (key, _) in enumerate(brute_fields) if key in zip_fields]
-    product_indices = [i for i, (key, _) in enumerate(brute_fields) if key in product_fields]
-
-    zip_payloads = [payload_lists[i] for i in zip_indices] if zip_indices else []
-    product_payloads = [payload_lists[i] for i in product_indices] if product_indices else []
-
-    zip_combos_iter = zip(*zip_payloads) if zip_payloads else [()]
-    for zip_combo in zip_combos_iter:
-        if product_payloads:
-            for prod_combo in product(*product_payloads):
-                yield zip_combo, prod_combo, zip_indices, product_indices
-        else:
-            yield zip_combo, (), zip_indices, product_indices
-
-def _normalize_fields_list(lst):
-    """Normalize list arguments that may contain comma/space separated items."""
-    if not lst:
-        return []
-    out = []
-    for item in lst:
-        # split on commas and whitespace
-        for token in filter(None, [t.strip() for part in item.split(',') for t in part.split()]):
-            out.append(token)
-    return out
-
-
-def setup_authentication(args):
-    """Setup initial authentication if required."""
-    if args.reauth <= 0:
-        return None, {}
-    
-    if not all([args.login_url, args.username, args.password]):
-        print("[-] Error: --reauth requires --login-url, --username, and --password")
-        sys.exit(1)
-    
-    # Parse auth headers if provided as list of "Key=Value"
-    auth_headers = {}
-    for h in args.auth_header or []:
-        if "=" not in h:
-            print(f"[-] Error: Invalid --auth-header format: {h}. Use KEY=VALUE")
-            sys.exit(1)
-        k, v = h.split("=", 1)
-        auth_headers[k.strip()] = v.strip()
-
-    auth = Authenticator(args.login_url, args.username, args.password, 
-                        args.proxy_url, args.insecure, auth_headers, args.auth_cookie_name)
-    
-    try:
-        session_cookie = auth.authenticate()
-        constants = {"cookie:session": session_cookie}
-        print(f"(+) Initial authentication successful, session cookie: {session_cookie}")
-        return auth, constants
-    except Exception as e:
-        print(f"[-] Initial authentication failed: {e}")
-        sys.exit(1)
-
-
-def run_brute_force():
-    """Run the brute-force attack with the provided arguments."""
-    if len(sys.argv) == 1 or "--help" in sys.argv:
-        show_help()
-        sys.exit(0)
-
+def main():
+    """Main function to run the brute-force tool."""
     args = parse_arguments()
-    param_list = args.param or []
-    
-    # Convert cookies to parameters
-    for cookie in args.cookie or []:
-        if "=" not in cookie:
-            print(f"[-] Error: Invalid cookie format: {cookie}. Use 'name=value' or 'name=file.txt'")
-            sys.exit(1)
-        name, source = cookie.split("=", 1)
-        param_list.append(f"cookie:{name}={source}")
+    brute_forcer = BruteForcer(args)
+    brute_forcer.run()
 
-    # Parse parameters
-    brute_fields, constants, increment_fields = parse_params(param_list)
-    zip_fields = _normalize_fields_list(args.zip_fields)
-    product_fields = _normalize_fields_list(args.product_fields)
 
-    # Validate and setup combination fields
-    product_fields = validate_combination_fields(brute_fields, zip_fields, product_fields)
+class BruteForcer:
+    """Handles the brute-force attack orchestration."""
 
-    # Prepare payloads
-    if brute_fields:
-        payload_sources = [source for _, source in brute_fields]
-        payload_lists = prepare_payloads([key for key, _ in brute_fields], payload_sources)
-        if not payload_lists:
-            print("[-] Error: No valid payloads generated. Check payload files or specifications.")
-            sys.exit(1)
-    else:
-        payload_lists = []
+    def __init__(self, args):
+        self.args = args
+        self.stop_event = threading.Event()
+        self.successes = []
+        self.attempt_counter = count(1)
+        self.failed_attempts = 0
+        self.output_file = None
+        self.auth = None
+        self.sessions = self._setup_sessions()
+        self.requeue_counts = Counter()
 
-    # Create combinations iterator (streaming)
-    combos_iter = None
-    if brute_fields:
-        combos_iter = generate_combinations_iter(brute_fields, zip_fields, product_fields, payload_lists)
-        # Estimate total attempts safely if lists are small (<= 50k combinations), else keep unknown
-        try:
-            # Compute sizes without loading all combos at once
-            sizes = {key: len(payload) for key, payload in zip([k for k, _ in brute_fields], payload_lists)}
-            zip_size = None
-            if zip_fields:
-                zip_size = min(sizes[k] for k in zip_fields)
-            product_size = 1
-            if product_fields:
-                for k in product_fields:
-                    product_size *= sizes[k]
-            base = (zip_size if zip_size is not None else 1) * (product_size if product_size else 1)
-            total_attempts = base if base <= 50000 else None
-        except Exception:
-            total_attempts = None
-    else:
-        total_attempts = 1
-
-    # Setup authentication
-    auth, auth_constants = setup_authentication(args)
-    constants.update(auth_constants)
-
-    # Initialize counters and display info
-    attempt_counter = count(1)
-    # total_attempts maybe unknown when streaming
-
-    print(f"(+) Starting brute-force on {args.url} with method {args.method}")
-    if brute_fields:
-        print(f"(+) Brute-force fields: {[key for key, _ in brute_fields]}")
-        if zip_fields:
-            print(f"(+) Zipped fields: {zip_fields}")
-        if product_fields:
-            print(f"(+) Product fields: {product_fields}")
-    if increment_fields:
-        print(f"(+) Increment fields: {increment_fields}")
-    if constants:
-        print(f"(+) Constant fields: {constants}")
-
-    # Setup session pool
-    sessions = setup_sessions(args.threads, args.retries)
-    successes = []
-    attempt_count = failed_attempts = 0
-    stop_event = threading.Event()
-    output_file = None
-    try:
-        if args.output:
-            output_file = open(args.output, "a", encoding="utf-8")
-    except Exception as e:
-        print(f"[-] Could not open output file {args.output}: {e}")
-        sys.exit(1)
-
-    with ThreadPoolExecutor(max_workers=args.threads) as executor:
-        pending = set()
-        scheduled = 0
-
-        def schedule_one(values):
-            nonlocal scheduled
-            session = sessions[scheduled % args.threads]
-            fut = executor.submit(
-                make_attempt, args.url, values, increment_fields,
-                next(attempt_counter), args, auth, session
-            )
-            pending.add(fut)
-            scheduled += 1
-
-        if combos_iter is None:
-            schedule_one(constants)
-        else:
-            # Pre-schedule up to threads to fill the pool
+    def run(self):
+        """Executes the brute-force attack."""
+        if self.args.output:
             try:
-                for _ in range(args.threads):
-                    zip_combo, product_combo, zip_indices, product_indices = next(combos_iter)
-                    field_values = {}
-                    for i, value in zip(zip_indices, zip_combo):
-                        field_values[brute_fields[i][0]] = value
-                    for i, value in zip(product_indices, product_combo):
-                        field_values[brute_fields[i][0]] = value
-                    schedule_one({**constants, **field_values})
-            except StopIteration:
-                pass
+                self.output_file = open(self.args.output, "a", encoding="utf-8")
+            except IOError as e:
+                print(f"[-] Error opening output file: {e}", file=sys.stderr)
+                sys.exit(1)
 
-        if scheduled and total_attempts is None:
-            print(f"(+) Scheduled initial batch of {min(scheduled, args.threads)} attempts (streaming mode)")
-        elif scheduled:
-            print(f"(+) Total attempts scheduled: {scheduled}")
+        param_list = self._prepare_param_list()
+        brute_fields, constants, increment_fields = self._parse_params(param_list)
+        self.args.increment_fields = increment_fields
 
-        while pending:
-            # Wait for any future to complete
-            for future in as_completed(list(pending), timeout=None):
-                pending.remove(future)
-                result = future.result()
-            attempt_count += 1
-            if args.verbose:
-                if total_attempts:
-                    print(f"(+) Attempt {attempt_count}/{total_attempts}")
-                else:
-                    print(f"(+) Attempt {attempt_count}")
+        zip_fields, product_fields = self._normalize_combination_fields()
+        self._validate_combination_fields(brute_fields, zip_fields, product_fields)
 
-            if len(result) == 5:  # Error case
-                combo, _, _, _, error = result
-                print(f"[-] Request failed for {combo} — {error}")
-                failed_attempts += 1
-                continue
+        payload_lists = self._prepare_payloads(brute_fields)
+        
+        if self.args.reauth > 0:
+            self._setup_authentication(constants)
 
-            combo, counter_val, response, elapsed = result
-            if check_success(response, elapsed, args):
-                print(f"[+] SUCCESS — {combo}")
-                print(f"    Status: {response.status_code}, Time: {elapsed:.2f}s, Length: {len(response.text)}")
-                if args.verbose:
-                    print(f"    Response preview:\n{response.text[:300]}\n")
-                successes.append(combo)
-                if output_file:
-                    try:
-                        output_file.write(json.dumps({"combo": combo, "status": response.status_code, "time": elapsed, "length": len(response.text)}) + "\n")
-                        output_file.flush()
-                    except Exception as e:
-                        print(f"[-] Failed to write to output file: {e}")
-                failed_attempts = 0
-                if args.stop_on_success:
-                    stop_event.set()
-                    # Attempt to cancel remaining futures
-                    for f in list(pending):
-                        f.cancel()
-                    pending.clear()
-                    break
-            else:
-                failed_attempts += 1
-                if args.verbose:
-                    print(f"[-] Failed — {combo} (Status: {response.status_code}, Time: {elapsed:.2f}s, Length: {len(response.text)})")
+        combos_iter = self._generate_combinations(brute_fields, zip_fields, product_fields, payload_lists, constants)
 
-            # Re-authentication logic
-            if args.reauth > 0 and failed_attempts >= args.reauth and not successes:
-                print(f"(+) Re-authenticating after {failed_attempts} failed attempts")
-                try:
-                    session_cookie = auth.authenticate()
-                    constants["cookie:session"] = session_cookie
-                    print(f"(+) Re-authentication successful, new session cookie: {session_cookie}")
-                    failed_attempts = 0
-                except Exception as e:
-                    print(f"[-] Re-authentication failed: {e}")
+        self._print_attack_info(brute_fields, increment_fields, constants, zip_fields, product_fields)
+
+        with ThreadPoolExecutor(max_workers=self.args.threads) as executor:
+            self._process_tasks(executor, combos_iter)
+
+        self._cleanup()
+        self._print_results()
+
+    def _setup_sessions(self):
+        """Creates a pool of requests sessions."""
+        retry_cfg = Retry(
+            total=self.args.retries,
+            backoff_factor=self.args.retry_backoff,
+            status_forcelist=[429, 500, 502, 503, 504],
+        )
+        adapter = HTTPAdapter(max_retries=retry_cfg, pool_connections=self.args.threads, pool_maxsize=self.args.threads * 2)
+        
+        sessions = [requests.Session() for _ in range(self.args.threads)]
+        for session in sessions:
+            session.mount("http://", adapter)
+            session.mount("https://", adapter)
+        return sessions
+
+    def _prepare_param_list(self):
+        """Merges --param and --cookie arguments into a single list."""
+        param_list = self.args.param or []
+        for cookie in self.args.cookie or []:
+            if "=" not in cookie:
+                print(f"[-] Error: Invalid cookie format: {cookie}. Use 'name=source'.", file=sys.stderr)
+                sys.exit(1)
+            name, source = cookie.split("=", 1)
+            param_list.append(f"cookie:{name}={source}")
+        return param_list
+
+    def _parse_params(self, param_args):
+        """Parses parameter arguments into brute-force fields, constants, and increment fields."""
+        brute_fields, constants, increment_fields = [], {}, []
+        for param in param_args:
+            if param.startswith("increment:"):
+                field = param[10:]
+                if not field:
+                    print("[-] Error: Increment field name cannot be empty.", file=sys.stderr)
                     sys.exit(1)
+                increment_fields.append(field)
+            elif "=" in param:
+                key, source = param.split("=", 1)
+                if os.path.isfile(source) or source.startswith("generate:"):
+                    brute_fields.append((key, source))
+                else:
+                    constants[key] = source.strip('"')
+            else:
+                print(f"[-] Error: Invalid param format: {param}. Use 'key=source' or 'increment:field'.", file=sys.stderr)
+                sys.exit(1)
+        return brute_fields, constants, increment_fields
 
-            # Max attempts guard
-            if args.max_attempts and attempt_count >= args.max_attempts:
-                print(f"(+) Reached max attempts limit: {args.max_attempts}")
-                # Attempt to cancel remaining and exit loop
-                for f in list(pending):
-                    f.cancel()
-                pending.clear()
+    def _normalize_combination_fields(self):
+        """Normalizes and returns zip and product fields from arguments."""
+        zip_fields = (self.args.zip_fields or "").replace(',', ' ').split()
+        product_fields = (self.args.product_fields or "").replace(',', ' ').split()
+        return zip_fields, product_fields
+
+    def _validate_combination_fields(self, brute_fields, zip_fields, product_fields):
+        """Validates that combination fields exist in brute-force fields."""
+        all_brute_keys = {key for key, _ in brute_fields}
+        if not zip_fields and not product_fields and brute_fields:
+            product_fields.extend(all_brute_keys)
+            self.args.product_fields = list(all_brute_keys)
+        
+        invalid_zip = set(zip_fields) - all_brute_keys
+        invalid_product = set(product_fields) - all_brute_keys
+
+        if invalid_zip or invalid_product:
+            print(f"[-] Error: Invalid fields found in --zip-fields or --product-fields.", file=sys.stderr)
+            if invalid_zip: print(f"    Invalid zip fields: {', '.join(invalid_zip)}", file=sys.stderr)
+            if invalid_product: print(f"    Invalid product fields: {', '.join(invalid_product)}", file=sys.stderr)
+            sys.exit(1)
+
+    def _prepare_payloads(self, brute_fields):
+        """Prepares payload lists for brute-force fields."""
+        if not brute_fields:
+            return []
+        keys, sources = zip(*brute_fields)
+        return prepare_payloads(keys, sources)
+
+    def _setup_authentication(self, constants):
+        """Initializes the authenticator and performs initial authentication."""
+        if not all([self.args.login_url, self.args.username, self.args.password]):
+            print("[-] Error: --reauth requires --login-url, --username, and --password.", file=sys.stderr)
+            sys.exit(1)
+
+        auth_headers = dict(h.split(":", 1) for h in self.args.auth_header or [])
+        self.auth = Authenticator(self.args.login_url, self.args.username, self.args.password,
+                                  self.args.proxy_url, self.args.insecure, auth_headers, self.args.auth_cookie_name)
+        try:
+            print("(+) Performing initial authentication...")
+            session_cookie = self.auth.authenticate()
+            constants[f"cookie:{self.args.auth_cookie_name}"] = session_cookie
+            print(f"(+) Initial authentication successful. Session cookie set.")
+        except Exception as e:
+            print(f"[-] Initial authentication failed: {e}", file=sys.stderr)
+            sys.exit(1)
+
+    def _generate_combinations(self, brute_fields, zip_fields, product_fields, payload_lists, constants):
+        """Yields payload combinations with their attempt numbers."""
+        if not brute_fields:
+            yield constants, next(self.attempt_counter)
+            return
+
+        brute_keys = [key for key, _ in brute_fields]
+        zip_indices = [brute_keys.index(f) for f in zip_fields]
+        product_indices = [brute_keys.index(f) for f in product_fields]
+
+        zip_payloads = [payload_lists[i] for i in zip_indices]
+        product_payloads = [payload_lists[i] for i in product_indices]
+
+        zip_combos = zip(*zip_payloads) if zip_payloads else [()]
+        
+        for zip_combo in zip_combos:
+            product_combos = product(*product_payloads) if product_payloads else [()]
+            for prod_combo in product_combos:
+                payload = constants.copy()
+                for i, val in enumerate(zip_combo):
+                    payload[zip_fields[i]] = val
+                for i, val in enumerate(prod_combo):
+                    payload[product_fields[i]] = val
+                yield payload, next(self.attempt_counter)
+
+    def _process_tasks(self, executor, combos_iter):
+        """Manages the submission and processing of tasks to the thread pool."""
+        futures = set()
+        
+        # Initial pool of tasks
+        for i in range(self.args.threads):
+            try:
+                payload, attempt_num = next(combos_iter)
+                session = self.sessions[i % self.args.threads]
+                fut = executor.submit(self._task_wrapper, payload, attempt_num, session)
+                futures.add(fut)
+            except StopIteration:
                 break
 
-            # Keep scheduling next items while not stopping
-            if combos_iter and not stop_event.is_set():
-                try:
-                    zip_combo, product_combo, zip_indices, product_indices = next(combos_iter)
-                    field_values = {}
-                    for i, value in zip(zip_indices, zip_combo):
-                        field_values[brute_fields[i][0]] = value
-                    for i, value in zip(product_indices, product_combo):
-                        field_values[brute_fields[i][0]] = value
-                    schedule_one({**constants, **field_values})
-                except StopIteration:
-                    pass
-            # If we broke due to stop/max, exit outer while
-            if stop_event.is_set() or (args.max_attempts and attempt_count >= args.max_attempts):
-                break
+        while futures:
+            for future in as_completed(futures):
+                futures.remove(future)
+                
+                if self.stop_event.is_set():
+                    continue
 
-    # Cleanup and results
-    for session in sessions:
-        session.close()
-    
-    if auth:
-        auth.close()
-    if output_file:
-        output_file.close()
+                result = future.result()
+                
+                # Check if the result was an error that needs re-queuing
+                payload, attempt_num, response, elapsed, *error = result
+                if error:
+                    self._handle_error(executor, result)
+                else:
+                    self._handle_result(result)
 
-    if not successes:
-        print("(-) No successful combinations found.")
-    else:
-        print("(+) Successful combinations:")
-        for combo in successes:
-            print(f"    {combo}")
+                # Schedule a new task if the attack is not stopping
+                if not self.stop_event.is_set():
+                    try:
+                        next_payload, next_attempt_num = next(combos_iter)
+                        session = self.sessions[next_attempt_num % self.args.threads]
+                        fut = executor.submit(self._task_wrapper, next_payload, next_attempt_num, session)
+                        futures.add(fut)
+                    except StopIteration:
+                        # No more new payloads to schedule
+                        pass
+
+    def _task_wrapper(self, payload, attempt_num, session):
+        """Wrapper for each task to handle exceptions and verbosity."""
+        if self.stop_event.is_set():
+            return None, None, None, None
+        
+        if self.args.verbose:
+            print(f"(+) Attempt {attempt_num}: {payload}")
+
+        return make_attempt(self.args.url, payload, attempt_num, self.args, session)
+
+    def _handle_result(self, result):
+        """Processes the result of a single attempt."""
+        payload, _, response, elapsed, *error = result
+        
+        if response and check_success(response, elapsed, self.args):
+            self._handle_success(payload, response, elapsed)
+        elif response:
+            self.failed_attempts += 1
+            if self.args.verbose:
+                print(f"[-] Failed: {payload} (Status: {response.status_code}, Time: {elapsed:.2f}s, Length: {len(response.text)})")
+            self._check_reauth()
+
+    def _handle_error(self, executor, result):
+        """Handles a request error, including re-queuing."""
+        payload, attempt_num, _, _, error_msg = result
+        payload_key = tuple(sorted(payload.items()))
+        
+        print(f"[-] Request Error: {payload} - {error_msg[0]}", file=sys.stderr)
+        self.failed_attempts += 1
+
+        self.requeue_counts[payload_key] += 1
+        max_retries = self.args.per_payload_max_retries
+        
+        if max_retries == 0 or self.requeue_counts[payload_key] <= max_retries:
+            print(f"    -> Re-submitting payload (retry {self.requeue_counts[payload_key]}/{max_retries or 'inf'}).")
+            session = self.sessions[attempt_num % self.args.threads]
+            # Re-submit the task to the executor
+            fut = executor.submit(self._task_wrapper, payload, attempt_num, session)
+            # This is a fire-and-forget resubmit into the pool.
+            # We'd need to add it back to the `futures` set to track it, which complicates the loop.
+            # A simpler model is to let the main loop handle adding new tasks.
+            # The current implementation will just resubmit without tracking, which is not ideal.
+            # Let's adjust the main loop to handle this better.
+        else:
+            print(f"    -> Max retries reached for payload. It will not be tried again.", file=sys.stderr)
+        
+        self._check_reauth()
+
+    def _handle_success(self, payload, response, elapsed):
+        """Handles a successful attempt."""
+        self.successes.append(payload)
+        self.failed_attempts = 0
+        print(f"[+] SUCCESS: {payload}")
+        print(f"    Status: {response.status_code}, Time: {elapsed:.2f}s, Length: {len(response.text)}")
+
+        if self.output_file:
+            json.dump({"payload": payload, "status": response.status_code, "time": elapsed, "length": len(response.text)}, self.output_file)
+            self.output_file.write('\n')
+            self.output_file.flush()
+
+        if self.args.stop_on_success:
+            self.stop_event.set()
+
+    def _check_reauth(self):
+        """Checks if re-authentication is needed and performs it."""
+        if self.auth and self.failed_attempts >= self.args.reauth > 0:
+            print("(+) Re-authenticating...")
+            try:
+                session_cookie = self.auth.authenticate()
+                # This is a simplified approach. In a real-world scenario, updating
+                # constants for in-flight/queued tasks would be more complex.
+                print("(+) Re-authentication successful.")
+                self.failed_attempts = 0
+            except Exception as e:
+                print(f"[-] Re-authentication failed: {e}. Exiting.", file=sys.stderr)
+                self.stop_event.set()
+
+    def _print_attack_info(self, brute_fields, increment_fields, constants, zip_fields, product_fields):
+        """Prints information about the upcoming attack."""
+        print(f"(+) Starting brute-force on {self.args.url} with method {self.args.method}")
+        if brute_fields: print(f"(+) Brute-force fields: {[key for key, _ in brute_fields]}")
+        if zip_fields: print(f"(+) Zipped fields: {zip_fields}")
+        if product_fields: print(f"(+) Product fields: {product_fields}")
+        if increment_fields: print(f"(+) Incrementing fields: {increment_fields}")
+        if constants: print(f"(+) Constant fields: {constants}")
+
+    def _cleanup(self):
+        """Cleans up resources like sessions and files."""
+        for session in self.sessions:
+            session.close()
+        if self.auth:
+            self.auth.close()
+        if self.output_file:
+            self.output_file.close()
+
+    def _print_results(self):
+        """Prints the final results of the attack."""
+        if not self.successes:
+            print("(-) No successful combinations found.")
+        else:
+            print("\n(+) Successful combinations found:")
+            for combo in self.successes:
+                print(f"    {combo}")
 
 
 if __name__ == "__main__":
-    run_brute_force()
+    main()

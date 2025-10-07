@@ -3,99 +3,87 @@ from time import perf_counter, sleep
 import urllib3
 import re
 
+# Disable warnings for insecure requests
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 def check_success(response, elapsed, args):
-    """Check if the response indicates a successful attempt."""
+    """Check if the response indicates a successful attempt based on user-defined criteria."""
     if response is None:
         return False
-    
-    # Early return for performance
+
     response_text = response.text
-    
-    # Priority order: most specific to least specific
-    if args.regex and re.search(args.regex, response_text):
-        return True
-    
-    if args.expect_text and args.expect_text in response_text:
-        return True
-    
-    if args.text and args.text not in response_text:
-        return True
-    
-    if args.code and response.status_code == args.code:
-        return True
-    
-    if args.length and len(response_text) == args.length:
-        return True
-    
-    if args.time and elapsed >= args.time:
-        return True
-    
-    return False
+
+    # A list of conditions to check. The first one to be true determines success.
+    conditions = [
+        (args.regex and re.search(args.regex, response_text)),
+        (args.expect_text and args.expect_text in response_text),
+        (args.text and args.text not in response_text),
+        (args.code and response.status_code == args.code),
+        (args.length and len(response_text) == args.length),
+        (args.time and elapsed >= args.time),
+    ]
+
+    return any(conditions)
 
 
-def make_attempt(url, all_values, increment_fields, counter_val, args, auth=None, session=None):
-    """Execute a single brute-force attempt."""
-    if args.insecure:
-        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-
-    # Separate parameters by type
-    body, headers, cookies = {}, {}, {}
+def make_attempt(url, payload, increment_value, args, session):
+    """Executes a single brute-force attempt."""
     
-    for key, value in all_values.items():
+    headers = {}
+    cookies = {}
+    body_params = {}
+
+    # Distribute payload values into headers, cookies, and body
+    for key, value in payload.items():
         if key.startswith("header:"):
             headers[key[7:]] = value
         elif key.startswith("cookie:"):
             cookies[key[7:]] = value
         else:
-            body[key] = value
+            body_params[key] = value
 
-    # Add increment fields
-    counter_str = str(counter_val)
-    for field in increment_fields:
-        if field.startswith("header:"):
-            headers[field[7:]] = counter_str
-        elif field.startswith("cookie:"):
-            cookies[field[7:]] = counter_str
-        else:
-            body[field] = counter_str
+    # Handle incrementing fields
+    if increment_value is not None:
+        counter_str = str(increment_value)
+        for field in args.increment_fields:
+            if field.startswith("header:"):
+                headers[field[7:]] = counter_str
+            elif field.startswith("cookie:"):
+                cookies[field[7:]] = counter_str
+            else:
+                body_params[field] = counter_str
 
-    # Prepare request parameters
-    proxies = {'http': args.proxy_url, 'https': args.proxy_url} if args.proxy_url else None
-    method_lower = args.method.lower()
-    
-    # Optimize parameter placement based on method and --json-body
-    json_body = None
-    if method_lower in ["post", "put", "patch"]:
+    # Prepare request arguments
+    request_args = {
+        "method": args.method,
+        "url": url,
+        "headers": headers,
+        "cookies": cookies,
+        "timeout": args.timeout,
+        "verify": not args.insecure,
+    }
+
+    if args.proxy_url:
+        request_args["proxies"] = {'http': args.proxy_url, 'https': args.proxy_url}
+
+    # Handle body/params based on HTTP method
+    if args.method.upper() in ["POST", "PUT", "PATCH"]:
         if args.json_body:
-            json_body, data, params = body, None, None
+            request_args["json"] = body_params
         else:
-            data, params = body, None
+            request_args["data"] = body_params
     else:
-        data, params = None, body
+        request_args["params"] = body_params
 
     try:
         start_time = perf_counter()
-        sess = session or requests.Session()
-        response = sess.request(
-            method=args.method,
-            url=url,
-            data=data,
-            json=json_body,
-            params=params,
-            headers=headers,
-            cookies=cookies,
-            verify=not args.insecure,
-            proxies=proxies,
-            timeout=args.timeout
-        )
+        response = session.request(**request_args)
         elapsed = perf_counter() - start_time
-        
-        # Apply delay after timing measurement
+
         if args.delay > 0:
             sleep(args.delay)
-        
-        return all_values, counter_val, response, elapsed
-        
+
+        return payload, increment_value, response, elapsed
+
     except requests.RequestException as e:
-        return all_values, counter_val, None, 0, str(e)
+        return payload, increment_value, None, 0, str(e)

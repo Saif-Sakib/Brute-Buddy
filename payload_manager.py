@@ -6,11 +6,11 @@ import os
 def load_file(file_path):
     """Load non-empty lines from a file into a list."""
     if not os.path.isfile(file_path):
-        print(f"[-] Error: File not found: {file_path}")
+        print(f"[-] Error: File not found: {file_path}", file=sys.stderr)
         sys.exit(1)
     
     if not os.access(file_path, os.R_OK):
-        print(f"[-] Error: File not readable: {file_path}")
+        print(f"[-] Error: File not readable: {file_path}", file=sys.stderr)
         sys.exit(1)
     
     try:
@@ -18,12 +18,11 @@ def load_file(file_path):
             lines = [line.strip() for line in file if line.strip()]
         
         if not lines:
-            print(f"[-] Error: File is empty or contains only empty lines: {file_path}")
-            sys.exit(1)
+            print(f"[-] Warning: File is empty or contains only empty lines: {file_path}", file=sys.stderr)
         
         return lines
     except Exception as e:
-        print(f"[-] Error reading file {file_path}: {e}")
+        print(f"[-] Error reading file {file_path}: {e}", file=sys.stderr)
         sys.exit(1)
 
 
@@ -31,29 +30,20 @@ def generate_payload(payload_spec):
     """Generate payloads from 'generate:chars:length' specification or load from file."""
     if payload_spec.startswith("generate:"):
         try:
-            parts = payload_spec.split(":", 2)
-            if len(parts) != 3:
-                raise ValueError("Invalid format")
-            
-            _, chars, length = parts
-            length = int(length)
+            _, chars, length_str = payload_spec.split(":", 2)
+            length = int(length_str)
             
             if length <= 0:
-                raise ValueError("Length must be positive")
+                raise ValueError("Length must be a positive integer.")
             if not chars:
-                raise ValueError("Characters must be provided")
-            if length > 10:  # Prevent excessive memory usage
-                print(f"[-] Warning: Large payload generation (length={length}). This may consume significant memory.")
+                raise ValueError("Character set for generation cannot be empty.")
+            if length > 10:
+                print(f"[-] Warning: Large payload generation (length={length}). This may consume significant memory.", file=sys.stderr)
             
-            payloads = [''.join(combo) for combo in product(chars, repeat=length)]
+            return [''.join(combo) for combo in product(chars, repeat=length)]
             
-            if not payloads:
-                raise ValueError("No payloads generated")
-            
-            return payloads
-            
-        except ValueError as e:
-            print(f"[-] Invalid payload format: {payload_spec}. Use 'generate:chars:length'. Error: {e}")
+        except (ValueError, IndexError) as e:
+            print(f"[-] Invalid payload format: {payload_spec}. Use 'generate:chars:length'. Error: {e}", file=sys.stderr)
             sys.exit(1)
     
     return load_file(payload_spec)
@@ -62,7 +52,7 @@ def generate_payload(payload_spec):
 def prepare_payloads(field_keys, payload_sources):
     """Prepare payload lists for each brute-force field."""
     if len(field_keys) != len(payload_sources):
-        print("[-] Error: Number of brute-force fields and payload sources must match")
+        print("[-] Error: Mismatch between number of brute-force fields and payload sources.", file=sys.stderr)
         sys.exit(1)
     
     return [generate_payload(source) for source in payload_sources]

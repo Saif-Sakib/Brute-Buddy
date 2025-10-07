@@ -4,8 +4,8 @@ from urllib3.util.retry import Retry
 
 
 class Authenticator:
-    """Manage authentication and re-authentication."""
-    
+    """Manages authentication and re-authentication."""
+
     def __init__(self, login_url, username, password, proxy_url=None, insecure=False, headers=None, cookie_name="session"):
         self.login_url = login_url
         self.username = username
@@ -14,44 +14,47 @@ class Authenticator:
         self.insecure = insecure
         self.headers = headers or {}
         self.cookie_name = cookie_name or "session"
-        
-        # Setup session with optimized retry strategy
-        self.session = requests.Session()
+        self.session = self._create_session()
+
+    def _create_session(self):
+        """Creates a requests session with a retry mechanism."""
+        session = requests.Session()
         retries = Retry(
             total=3,
             backoff_factor=0.2,
             status_forcelist=[429, 500, 502, 503, 504],
-            allowed_methods={"POST", "GET"}
         )
-        adapter = HTTPAdapter(max_retries=retries, pool_connections=1, pool_maxsize=1)
-        self.session.mount("http://", adapter)
-        self.session.mount("https://", adapter)
+        adapter = HTTPAdapter(max_retries=retries)
+        session.mount("http://", adapter)
+        session.mount("https://", adapter)
+
+        if self.proxy_url:
+            session.proxies = {'http': self.proxy_url, 'https': self.proxy_url}
         
-        self.proxies = {'http': proxy_url, 'https': proxy_url} if proxy_url else None
+        session.verify = not self.insecure
+
+        return session
 
     def authenticate(self):
-        """Authenticate and return the session cookie value (by name)."""
+        """Authenticates and returns the session cookie value."""
         try:
             response = self.session.post(
                 self.login_url,
                 data={'username': self.username, 'password': self.password},
                 headers=self.headers,
-                verify=not self.insecure,
-                proxies=self.proxies,
                 timeout=20
             )
             response.raise_for_status()
-            
+
             cookies = response.cookies.get_dict()
             if self.cookie_name not in cookies:
-                raise ValueError(f"No '{self.cookie_name}' cookie received")
-            
+                raise ValueError(f"Authentication successful, but cookie '{self.cookie_name}' not found in response.")
+
             return cookies[self.cookie_name]
-            
+
         except requests.RequestException as e:
-            raise Exception(f"Authentication error: {e}")
+            raise Exception(f"Authentication failed: {e}")
 
     def close(self):
-        """Close the HTTP session."""
-        if hasattr(self, 'session'):
-            self.session.close()
+        """Closes the HTTP session."""
+        self.session.close()

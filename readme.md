@@ -1,6 +1,163 @@
 # Brute Buddy
 
-The **Brute Buddy** is a versatile and robust tool crafted for security researchers and penetration testers to assess the strength of web applications against brute-force attacks. With support for multi-field brute-forcing, dynamic payload generation, re-authentication, and highly customizable success criteria, it’s an ideal choice for testing authentication endpoints, headers, cookies, and more.
+# Brute Buddy
+
+Brute Buddy is a versatile and robust tool for web application security testing, designed to make complex brute-force attacks simple and effective. It supports multi-field brute-forcing, dynamic payload generation, and intelligent session handling, making it ideal for testing login forms, API endpoints, and more.
+
+---
+
+## Quick Start
+
+Try a basic login brute-force on a test endpoint. This command attempts to find a valid username from `users.txt` using a single, constant password.
+
+```bash
+# Create a dummy users.txt file
+echo "admin" > users.txt
+echo "user" >> users.txt
+echo "test" >> users.txt
+
+# Run the attack
+python run.py https://httpbin.org/post \
+  --param username=users.txt \
+  --param password="password123" \
+  --expect-text "password123" \
+  --threads 5
+```
+
+---
+
+## Core Concepts
+
+### 1. Payload Sources
+
+Every parameter or cookie you test needs a source for its values (payloads). Brute Buddy supports three types:
+
+-   **File**: A simple text file where each line is a payload.
+    -   `--param username=users.txt`
+-   **Generated**: Create payloads on the fly. Excellent for numeric or simple character-based codes.
+    -   `--param mfa_code=generate:0123456789:6` (generates all 6-digit codes)
+-   **Constant**: A single, fixed value.
+    -   `--param role="admin"`
+
+### 2. Targeting Fields
+
+You can target different parts of an HTTP request by adding a prefix to your parameter key:
+
+-   **Body/URL Parameter** (default): No prefix needed.
+    -   `--param username=users.txt`
+-   **HTTP Header**: Use the `header:` prefix.
+    -   `--param header:X-API-Key=keys.txt`
+-   **Cookie**: Use the `cookie:` prefix or the `--cookie` shorthand.
+    -   `--param cookie:session_id=sessions.txt`
+    -   `--cookie session_id=sessions.txt`
+
+### 3. Combination Strategies
+
+When you provide multiple brute-force fields, you need to tell Brute Buddy how to combine them.
+
+-   **Product Mode** (default): Tries **every possible combination**. If you have 10 usernames and 10 passwords, it will make 100 requests. Use `--product-fields` to specify which fields to include.
+-   **Zip Mode**: Pairs payloads from different sources. The first username is tried with the first password, the second with the second, and so on. The attack stops when the shortest list runs out. Use `--zip-fields` to specify which fields to pair.
+
+---
+
+## Features & Command-Line Options
+
+### Parameters and Payloads
+-   `url`: The target URL (required).
+-   `--param <key=source>`: Defines a parameter. Can be used multiple times.
+-   `--cookie <name=source>`: Shorthand for `--param cookie:name=source`.
+-   `--zip-fields <field1,field2>`: Comma-separated fields to "zip" together.
+-   `--product-fields <field1,field2>`: Comma-separated fields for product combination. If no combination strategy is set, all fields are used in product mode.
+-   `--max-attempts <num>`: Stop after a certain number of attempts.
+
+### Authentication
+-   `--login-url <url>`: URL for re-authentication if a session expires.
+-   `--username <user>` / `--password <pass>`: Credentials for re-authentication.
+-   `--reauth <num>`: Re-authenticate after `num` consecutive failures.
+-   `--auth-header <Key:Value>`: Custom header to send with authentication requests.
+-   `--auth-cookie-name <name>`: The name of the session cookie to extract after login.
+
+### Success Criteria (First Match Wins)
+-   `--expect-text <text>`: Success if this text is **found** in the response.
+-   `--text <text>`: Success if this text is **not found** in the response.
+-   `--regex <pattern>`: Success if this regex pattern matches the response.
+-   `--code <code>`: Success if the HTTP status code matches.
+-   `--length <len>`: Success if the response body has this exact length.
+-   `--time <seconds>`: Success if the response takes at least this long.
+
+### Performance
+-   `--threads <num>`: Number of concurrent threads (default: 10).
+-   `--delay <seconds>`: Delay between each request (default: 0).
+-   `--retries <num>`: Retries for HTTP server errors (e.g., 5xx) (default: 3).
+-   `--per-payload-max-retries <num>`: Max retries for a payload on network errors (e.g., timeout) (default: 5).
+
+### Network
+-   `--method <method>`: HTTP method (default: POST).
+-   `--json-body`: Send parameters as a JSON body instead of form data.
+-   `--proxy-url <url>`: Route traffic through a proxy like Burp Suite (`http://127.0.0.1:8080`).
+-   `--insecure`: Skip SSL certificate verification.
+-   `--timeout <seconds>`: Request timeout in seconds (default: 10).
+
+### Output
+-   `-v, --verbose`: Show detailed output for all attempts.
+-   `--output <file>`: Save successful results to a file in JSON lines format.
+-   `--stop-on-success`: Stop the attack after the first success.
+
+---
+
+## Examples
+
+### 1. Basic Login Brute-Force
+Try a list of passwords for a single user.
+```bash
+python run.py https://example.com/login \
+  --param username="admin" \
+  --param password=passwords.txt \
+  --text "Invalid credentials"
+```
+
+### 2. Zipping Usernames and Passwords
+Try `user1` with `pass1`, `user2` with `pass2`, and so on.
+```bash
+python run.py https://example.com/login \
+  --param username=users.txt \
+  --param password=passes.txt \
+  --zip-fields "username,password" \
+  --text "Invalid credentials"
+```
+
+### 3. Combined Zip and Product Attack
+Zip a username and password, and for each pair, try a list of MFA tokens.
+```bash
+python run.py https://example.com/login-mfa \
+  --param username=users.txt \
+  --param password=passes.txt \
+  --param mfa_token=tokens.txt \
+  --zip-fields "username,password" \
+  --product-fields "mfa_token" \
+  --code 200
+```
+
+### 4. Brute-Forcing a Header API Key
+Test a list of API keys sent in an HTTP header.
+```bash
+python run.py https://api.example.com/v1/user \
+  --method GET \
+  --param header:X-Api-Key=keys.txt \
+  --code 200
+```
+
+### 5. Re-authentication and Saving Output
+Generate 6-digit codes and re-authenticate every 100 failures. Save successful codes to a file.
+```bash
+python run.py https://example.com/mfa-check \
+  --param code=generate:0123456789:6 \
+  --reauth 100 \
+  --login-url https://example.com/login \
+  --username "admin" --password "admin123" \
+  --code 200 \
+  --output successful_codes.jsonl
+```
 
 ---
 
@@ -87,6 +244,7 @@ See `USAGE.md` for a full feature guide with more examples.
 - Performance/network:
   - `--threads N` (default 5), `--delay SEC` (default 0.1), `--retries N` (default 3).
   - `--method METHOD`, `--timeout SEC`, `--proxy-url URL`, `--insecure`, `--json-body`.
+  - Retries: by default, each payload is retried on network errors until an HTTP response is received; disable with `--no-retry-until-response`. Control adapter retries with `--retries` and `--retry-backoff`.
 - Output:
   - `-v/--verbose`, `--output FILE` (JSON lines), `--stop-on-success`.
 
@@ -148,6 +306,17 @@ python run.py https://example.com/login \
 - `--text` indicates failure text; success is when this text is NOT present.
 - `--zip-fields` and `--product-fields` accept multiple values separated by spaces or commas and may be repeated.
 - In streaming mode, total attempts may be unknown if lists are very large; the tool schedules work efficiently without loading all combinations into memory.
+
+---
+
+## Troubleshooting
+
+- Proxy timeouts (via `--proxy-url`): If the proxy is down/slow, requests will retry with exponential backoff and, by default, the same payload will be re-queued until an HTTP response is received. To prevent long waits, set `--per-payload-max-retries` or disable with `--no-retry-until-response`.
+- Network/server down: By default, a payload keeps retrying on network errors until a response. You can cap re-queues with `--per-payload-max-retries` or turn off strict delivery via `--no-retry-until-response`. Adapter-level retries are also controlled by `--retries` and `--retry-backoff`.
+- Verbose output: `-v/--verbose` prints per-attempt logs when attempts complete (success or failure). If attempts are slow (timeouts), logs will appear once they finish. In streaming mode, the initial message may show only the first batch scheduled (e.g., 10 with `--threads 10`).
+- Streaming scheduler: The tool schedules up to `--threads` attempts initially, then refills as each attempt completes. It does not load all combinations at once, enabling large wordlists.
+
+If issues persist, try a quick control run without a proxy and shorter timeouts to isolate network conditions.
 
 ---
 
