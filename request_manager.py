@@ -64,18 +64,24 @@ def make_attempt(url, all_values, increment_fields, counter_val, args, auth=None
     proxies = {'http': args.proxy_url, 'https': args.proxy_url} if args.proxy_url else None
     method_lower = args.method.lower()
     
-    # Optimize parameter placement based on method
+    # Optimize parameter placement based on method and --json-body
+    json_body = None
     if method_lower in ["post", "put", "patch"]:
-        data, params = body, None
+        if args.json_body:
+            json_body, data, params = body, None, None
+        else:
+            data, params = body, None
     else:
         data, params = None, body
 
     try:
         start_time = perf_counter()
-        response = session.request(
+        sess = session or requests.Session()
+        response = sess.request(
             method=args.method,
             url=url,
             data=data,
+            json=json_body,
             params=params,
             headers=headers,
             cookies=cookies,

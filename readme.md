@@ -110,45 +110,123 @@ python run.py https://example.com/mfa \
 - Expects a 200 status code.
 - Re-authenticates every 100 failed attempts.
 
-### Example 3: Cookie and Header Brute-Force with Zip Mode
+````markdown
+# Brute Buddy
+
+Brute Buddy is a versatile and robust tool for security researchers and penetration testers to assess the strength of web applications against brute-force attacks. It supports multi-field brute-forcing, dynamic payload generation, re-authentication, and customizable success criteria for testing forms, headers, cookies, and more.
+
+---
+
+## Features
+
+- Targeted brute-forcing of fields using `--param` and cookies via `--cookie`.
+- Flexible payloads: file-based or generated on-the-fly with `generate:chars:length`.
+- Combination modes: Cartesian product (default) and zip pairing with `--zip-fields`.
+- Constant and incrementing fields (e.g., `--param increment:header:X-Request-ID`).
+- Re-authentication support with `--reauth` and `--login-url/--username/--password`.
+- Success criteria by regex, expected text, absence of text, status code, response length, or time.
+- Multi-threading, retries, proxy support, JSON body requests, and optional output to file.
+
+---
+
+## Installation
+
+1. Ensure Python 3.10+ is installed.
+2. Install dependencies:
+   ```bash
+   pip install -r requirements.txt
+   ```
+3. Show help and examples:
+   ```bash
+   python run.py --help
+   ```
+
+---
+
+## Command-line options (summary)
+
+- Required:
+  - `url`: Target URL.
+- Parameters and cookies:
+  - `--param key=source` where source is `file.txt`, `generate:chars:length`, or a constant value (quoted or unquoted).
+  - `--cookie name=source` same sources as above; use `cookie:` or `header:` prefixes inside `--param` to set cookies/headers.
+- Combination:
+  - `--zip-fields FIELD [FIELD ...]` pair fields by index.
+  - `--product-fields FIELD [FIELD ...]` Cartesian product for listed fields (default for all if unspecified).
+  - `--max-attempts N` limit total attempts (0 = unlimited).
+- Authentication:
+  - `--login-url`, `--username`, `--password`, optional `--auth-header KEY=VAL` (repeatable), `--reauth N`.
+- Success criteria:
+  - `--regex PATTERN`, `--expect-text TEXT`, `--text TEXT`, `--code INT`, `--length INT`, `--time SEC`.
+- Performance/network:
+  - `--threads N` (default 5), `--delay SEC` (default 0.1), `--retries N` (default 3).
+  - `--method METHOD`, `--timeout SEC`, `--proxy-url URL`, `--insecure`, `--json-body`.
+- Output:
+  - `-v/--verbose`, `--output FILE` (JSON lines), `--stop-on-success`.
+
+---
+
+## Examples
+
+1) Basic username/password brute-force
+```bash
+python run.py https://example.com/login \
+  --param username=usernames.txt \
+  --param password=passwords.txt \
+  --expect-text "Welcome" \
+  --threads 10
+```
+
+2) Generated MFA with re-authentication and incrementing header
+```bash
+python run.py https://example.com/mfa \
+  --param mfa-code=generate:0123456789:6 \
+  --param increment:header:X-Request-ID \
+  --code 200 \
+  --reauth 100 --login-url https://example.com/login \
+  --username admin --password pass123
+```
+
+3) Cookie + header zip, regex success, via proxy
 ```bash
 python run.py https://example.com/api \
   --cookie stay-logged-in=cookies.txt \
   --param header:X-API-Key=keys.txt \
   --zip-fields cookie:stay-logged-in header:X-API-Key \
-  --regex "Success.*"
+  --regex "Success.*" \
+  --proxy-url http://127.0.0.1:8080 --insecure
 ```
-- Brute-forces the `stay-logged-in` cookie and `X-API-Key` header.
-- Uses zip mode to pair cookie and header values.
-- Checks for a regex match of "Success.*".
 
-### Example 4: Combining Zip and Product Modes
+4) Zip username/password and product with token
 ```bash
 python run.py https://example.com/auth \
-  --param username=users.txt \
-  --param password=passes.txt \
+  --param username=users.txt --param password=passes.txt \
   --param token=tokens.txt \
   --zip-fields username password \
   --product-fields token \
-  --no-text "Invalid"
+  --text "Invalid"
 ```
-- Zips `username` and `password` (e.g., username1 with password1).
-- Combines zipped pairs with each `token` using product mode.
-- Succeeds if "Invalid" is absent in the response.
+
+5) JSON body request with early stop and output file
+```bash
+python run.py https://example.com/login \
+  --param username=users.txt --param password=passes.txt \
+  --json-body --code 200 \
+  --stop-on-success --output hits.jsonl
+```
 
 ---
 
-## Tips
+## Notes
 
-- **Performance Tuning**: Start with fewer threads (e.g., 5-10) and adjust based on server response times.
-- **Payload Optimization**: Use generated payloads for small character sets to manage memory usage.
-- **Combination Modes**: Choose zip mode for synchronized fields (e.g., username/password pairs) and product mode for independent fields.
-- **Re-Authentication**: Enable for endpoints requiring active sessions, especially with multi-threading.
-- **Proxy Usage**: Pair with tools like Burp Suite for request inspection.
-- **Verbose Mode**: Use for debugging or detailed analysis of request/response flows.
+- `--text` indicates failure text; success is when this text is NOT present.
+- `--zip-fields` and `--product-fields` accept multiple values separated by spaces or commas and may be repeated.
+- In streaming mode, total attempts may be unknown if lists are very large; the tool schedules work efficiently without loading all combinations into memory.
 
 ---
 
 ## License
 
-This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
+MIT
+
+````

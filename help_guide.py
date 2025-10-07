@@ -15,6 +15,7 @@ Parameter Options:
   --cookie NAME=SOURCE  Cookie specification (e.g., session=cookies.txt)
   --zip-fields FIELD    Fields to combine with zip (e.g., username password)
   --product-fields FIELD Fields to combine with product (e.g., token)
+  --max-attempts NUM    Maximum number of attempts to perform (0 = no limit)
 
 Authentication:
   --login-url URL       URL for re-authentication
@@ -41,9 +42,12 @@ Network:
   --proxy-url URL       Proxy URL (e.g., http://127.0.0.1:8080)
   --insecure            Disable SSL verification
   --method METHOD       HTTP request method (default: POST)
+  --json-body           Send request body as JSON (for POST/PUT/PATCH)
 
 Output:
   -v, --verbose         Show detailed output
+  --output FILE         Save successful combos to file as JSON lines
+  --stop-on-success     Stop after the first successful attempt
 
 Examples:
   1. Basic username/password brute-force:
@@ -70,6 +74,11 @@ Examples:
        --param username=users.txt --param password=passes.txt \\
        --param token=tokens.txt --zip-fields username password \\
        --product-fields token --text 'Invalid'
+
+  5. JSON body login:
+     python run.py https://example.com/login \
+       --param username=users.txt --param password=passes.txt \
+       --json-body --code 200
 
 Tips:
   • Use --zip-fields and --product-fields to control combinations

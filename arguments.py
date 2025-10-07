@@ -32,6 +32,8 @@ def parse_arguments():
                         help="Custom header for authentication (e.g., X-API-Key=value)")
     parser.add_argument("--reauth", type=int, default=0,
                         help="Re-authenticate after this many failures (0 = disabled)")
+    parser.add_argument("--auth-cookie-name", default="session",
+                        help="Cookie name to extract from the authentication response (default: session)")
     
     # Success criteria
     parser.add_argument("--text", help="Text indicating failure (not present = success)")
@@ -51,8 +53,15 @@ def parse_arguments():
     parser.add_argument("--insecure", action="store_true", help="Skip SSL verification")
     parser.add_argument("--method", default="POST", help="HTTP request method (e.g., GET, POST, PUT, DELETE, PATCH)")
     parser.add_argument("--timeout", type=float, default=20, help="Request timeout in seconds (default: 20)")
+    parser.add_argument("--json-body", action="store_true",
+                        help="Send request body as JSON (overrides form-encoded body)")
     
     # Output settings
     parser.add_argument("-v", "--verbose", action="store_true", help="Show detailed output")
+    parser.add_argument("--output", help="Write successful combinations to this file (JSON lines)")
+    parser.add_argument("--stop-on-success", action="store_true",
+                        help="Stop immediately after the first successful attempt")
+    parser.add_argument("--max-attempts", type=int, default=0,
+                        help="Maximum number of attempts to perform (0 = no limit)")
     
     return parser.parse_args()

@@ -9,6 +9,8 @@ import sys
 import requests
 from requests.adapters import HTTPAdapter
 import os
+import threading
+import json
 
 
 def parse_params(param_args):
@@ -77,18 +79,32 @@ def validate_combination_fields(brute_fields, zip_fields, product_fields):
     return product_fields
 
 
-def generate_combinations(brute_fields, zip_fields, product_fields, payload_lists):
-    """Generate all parameter combinations efficiently."""
+def generate_combinations_iter(brute_fields, zip_fields, product_fields, payload_lists):
+    """Yield parameter combinations without materializing all in memory."""
     zip_indices = [i for i, (key, _) in enumerate(brute_fields) if key in zip_fields]
     product_indices = [i for i, (key, _) in enumerate(brute_fields) if key in product_fields]
-    
+
     zip_payloads = [payload_lists[i] for i in zip_indices] if zip_indices else []
     product_payloads = [payload_lists[i] for i in product_indices] if product_indices else []
-    
-    zip_combos = list(zip(*zip_payloads)) if zip_payloads else [()]
-    product_combos = list(product(*product_payloads)) if product_payloads else [()]
-    
-    return list(product(zip_combos, product_combos)), zip_indices, product_indices
+
+    zip_combos_iter = zip(*zip_payloads) if zip_payloads else [()]
+    for zip_combo in zip_combos_iter:
+        if product_payloads:
+            for prod_combo in product(*product_payloads):
+                yield zip_combo, prod_combo, zip_indices, product_indices
+        else:
+            yield zip_combo, (), zip_indices, product_indices
+
+def _normalize_fields_list(lst):
+    """Normalize list arguments that may contain comma/space separated items."""
+    if not lst:
+        return []
+    out = []
+    for item in lst:
+        # split on commas and whitespace
+        for token in filter(None, [t.strip() for part in item.split(',') for t in part.split()]):
+            out.append(token)
+    return out
 
 
 def setup_authentication(args):
@@ -100,8 +116,17 @@ def setup_authentication(args):
         print("[-] Error: --reauth requires --login-url, --username, and --password")
         sys.exit(1)
     
+    # Parse auth headers if provided as list of "Key=Value"
+    auth_headers = {}
+    for h in args.auth_header or []:
+        if "=" not in h:
+            print(f"[-] Error: Invalid --auth-header format: {h}. Use KEY=VALUE")
+            sys.exit(1)
+        k, v = h.split("=", 1)
+        auth_headers[k.strip()] = v.strip()
+
     auth = Authenticator(args.login_url, args.username, args.password, 
-                        args.proxy_url, args.insecure, args.auth_header or {})
+                        args.proxy_url, args.insecure, auth_headers, args.auth_cookie_name)
     
     try:
         session_cookie = auth.authenticate()
@@ -132,8 +157,8 @@ def run_brute_force():
 
     # Parse parameters
     brute_fields, constants, increment_fields = parse_params(param_list)
-    zip_fields = args.zip_fields or []
-    product_fields = args.product_fields or []
+    zip_fields = _normalize_fields_list(args.zip_fields)
+    product_fields = _normalize_fields_list(args.product_fields)
 
     # Validate and setup combination fields
     product_fields = validate_combination_fields(brute_fields, zip_fields, product_fields)
@@ -148,9 +173,27 @@ def run_brute_force():
     else:
         payload_lists = []
 
-    # Generate combinations
-    all_combinations, zip_indices, product_indices = generate_combinations(
-        brute_fields, zip_fields, product_fields, payload_lists)
+    # Create combinations iterator (streaming)
+    combos_iter = None
+    if brute_fields:
+        combos_iter = generate_combinations_iter(brute_fields, zip_fields, product_fields, payload_lists)
+        # Estimate total attempts safely if lists are small (<= 50k combinations), else keep unknown
+        try:
+            # Compute sizes without loading all combos at once
+            sizes = {key: len(payload) for key, payload in zip([k for k, _ in brute_fields], payload_lists)}
+            zip_size = None
+            if zip_fields:
+                zip_size = min(sizes[k] for k in zip_fields)
+            product_size = 1
+            if product_fields:
+                for k in product_fields:
+                    product_size *= sizes[k]
+            base = (zip_size if zip_size is not None else 1) * (product_size if product_size else 1)
+            total_attempts = base if base <= 50000 else None
+        except Exception:
+            total_attempts = None
+    else:
+        total_attempts = 1
 
     # Setup authentication
     auth, auth_constants = setup_authentication(args)
@@ -158,7 +201,7 @@ def run_brute_force():
 
     # Initialize counters and display info
     attempt_counter = count(1)
-    total_attempts = len(all_combinations) if all_combinations else 1
+    # total_attempts maybe unknown when streaming
 
     print(f"(+) Starting brute-force on {args.url} with method {args.method}")
     if brute_fields:
@@ -176,38 +219,61 @@ def run_brute_force():
     sessions = setup_sessions(args.threads, args.retries)
     successes = []
     attempt_count = failed_attempts = 0
+    stop_event = threading.Event()
+    output_file = None
+    try:
+        if args.output:
+            output_file = open(args.output, "a", encoding="utf-8")
+    except Exception as e:
+        print(f"[-] Could not open output file {args.output}: {e}")
+        sys.exit(1)
 
     with ThreadPoolExecutor(max_workers=args.threads) as executor:
-        futures = []
-        
-        if not all_combinations:
-            futures.append(executor.submit(
-                make_attempt, args.url, constants, increment_fields, 
-                next(attempt_counter), args, auth, sessions[0]
-            ))
+        pending = set()
+        scheduled = 0
+
+        def schedule_one(values):
+            nonlocal scheduled
+            session = sessions[scheduled % args.threads]
+            fut = executor.submit(
+                make_attempt, args.url, values, increment_fields,
+                next(attempt_counter), args, auth, session
+            )
+            pending.add(fut)
+            scheduled += 1
+
+        if combos_iter is None:
+            schedule_one(constants)
         else:
-            for zip_combo, product_combo in all_combinations:
-                field_values = {}
-                for i, value in zip(zip_indices, zip_combo):
-                    field_values[brute_fields[i][0]] = value
-                for i, value in zip(product_indices, product_combo):
-                    field_values[brute_fields[i][0]] = value
-                
-                all_values = {**constants, **field_values}
-                session = sessions[len(futures) % args.threads]
-                futures.append(executor.submit(
-                    make_attempt, args.url, all_values, increment_fields, 
-                    next(attempt_counter), args, auth, session
-                ))
+            # Pre-schedule up to threads to fill the pool
+            try:
+                for _ in range(args.threads):
+                    zip_combo, product_combo, zip_indices, product_indices = next(combos_iter)
+                    field_values = {}
+                    for i, value in zip(zip_indices, zip_combo):
+                        field_values[brute_fields[i][0]] = value
+                    for i, value in zip(product_indices, product_combo):
+                        field_values[brute_fields[i][0]] = value
+                    schedule_one({**constants, **field_values})
+            except StopIteration:
+                pass
 
-        print(f"(+) Total attempts scheduled: {len(futures)}")
+        if scheduled and total_attempts is None:
+            print(f"(+) Scheduled initial batch of {min(scheduled, args.threads)} attempts (streaming mode)")
+        elif scheduled:
+            print(f"(+) Total attempts scheduled: {scheduled}")
 
-        for future in as_completed(futures):
+        while pending:
+            # Wait for any future to complete
+            for future in as_completed(list(pending), timeout=None):
+                pending.remove(future)
+                result = future.result()
             attempt_count += 1
             if args.verbose:
-                print(f"(+) Attempt {attempt_count}/{total_attempts}")
-            
-            result = future.result()
+                if total_attempts:
+                    print(f"(+) Attempt {attempt_count}/{total_attempts}")
+                else:
+                    print(f"(+) Attempt {attempt_count}")
 
             if len(result) == 5:  # Error case
                 combo, _, _, _, error = result
@@ -222,7 +288,20 @@ def run_brute_force():
                 if args.verbose:
                     print(f"    Response preview:\n{response.text[:300]}\n")
                 successes.append(combo)
+                if output_file:
+                    try:
+                        output_file.write(json.dumps({"combo": combo, "status": response.status_code, "time": elapsed, "length": len(response.text)}) + "\n")
+                        output_file.flush()
+                    except Exception as e:
+                        print(f"[-] Failed to write to output file: {e}")
                 failed_attempts = 0
+                if args.stop_on_success:
+                    stop_event.set()
+                    # Attempt to cancel remaining futures
+                    for f in list(pending):
+                        f.cancel()
+                    pending.clear()
+                    break
             else:
                 failed_attempts += 1
                 if args.verbose:
@@ -240,12 +319,39 @@ def run_brute_force():
                     print(f"[-] Re-authentication failed: {e}")
                     sys.exit(1)
 
+            # Max attempts guard
+            if args.max_attempts and attempt_count >= args.max_attempts:
+                print(f"(+) Reached max attempts limit: {args.max_attempts}")
+                # Attempt to cancel remaining and exit loop
+                for f in list(pending):
+                    f.cancel()
+                pending.clear()
+                break
+
+            # Keep scheduling next items while not stopping
+            if combos_iter and not stop_event.is_set():
+                try:
+                    zip_combo, product_combo, zip_indices, product_indices = next(combos_iter)
+                    field_values = {}
+                    for i, value in zip(zip_indices, zip_combo):
+                        field_values[brute_fields[i][0]] = value
+                    for i, value in zip(product_indices, product_combo):
+                        field_values[brute_fields[i][0]] = value
+                    schedule_one({**constants, **field_values})
+                except StopIteration:
+                    pass
+            # If we broke due to stop/max, exit outer while
+            if stop_event.is_set() or (args.max_attempts and attempt_count >= args.max_attempts):
+                break
+
     # Cleanup and results
     for session in sessions:
         session.close()
     
     if auth:
         auth.close()
+    if output_file:
+        output_file.close()
 
     if not successes:
         print("(-) No successful combinations found.")
