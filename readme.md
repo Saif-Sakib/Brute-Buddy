@@ -1,20 +1,18 @@
 # Brute Buddy
 
-# Brute Buddy
-
-Brute Buddy is a versatile and robust CLI for web app security testing. It makes complex brute-force scenarios simple: multi-field brute-forcing, dynamic payloads, and smart session handling for forms, APIs, headers, and cookies.
+Brute Buddy is a fast, flexible CLI for web app security testing. It makes complex brute-force scenarios simple: multi-field payloads, generated values, zipped/product combinations, headers/cookies, and smart re-authentication.
 
 ---
 
-## Quick Start
+## Quick start
 
-Try a basic login brute-force on a test endpoint. This finds a valid username from `users.txt` with a constant password.
+Try a basic login brute-force on a test endpoint. This tries every username in `users.txt` with a constant password.
 
 ```bash
 # Create a dummy users.txt file
 echo "admin" > users.txt
-echo "user" >> users.txt
-echo "test" >> users.txt
+echo "user"  >> users.txt
+echo "test"  >> users.txt
 
 # Run the attack
 python run.py https://httpbin.org/post \
@@ -26,143 +24,214 @@ python run.py https://httpbin.org/post \
 
 ---
 
-## Installation
+## Install
 
-1.  Ensure you have Python 3.10+ installed.
-2.  Install the required dependencies:
-    ```bash
-    pip install -r requirements.txt
-    ```
-3.  You're ready to go!
-
----
-
-## Usage
-
-For a quick overview of the commands, use the standard help flag:
-
+1) Python 3.10+
+2) Install dependencies:
+```bash
+pip install -r requirements.txt
+```
+3) Show all options:
 ```bash
 python run.py --help
 ```
 
-For a comprehensive guide with detailed explanations and examples of all features, use the `--help-guide` flag:
+---
 
+## How it works (in 60 seconds)
+
+- You define parameters with `--param key=source`.
+- Sources can be:
+  - A file: `username=users.txt` (one value per line)
+  - Generated: `code=generate:0123456789:6` (all 6-digit codes)
+  - Constant: `role=admin`
+  - Incrementing: `increment:id` (uses attempt counter)
+- Target where each param goes:
+  - Body/URL (default): `username=users.txt`
+  - Header: `header:X-Api-Key=keys.txt`
+  - Cookie: `cookie:session=values.txt` or shorthand `--cookie session=values.txt`
+- Combine fields:
+  - Product mode (default): try every combination.
+  - Zip mode: pair fields by index with `--zip-fields "field1,field2"`.
+
+If you don’t specify `--product-fields` or `--zip-fields`, all brute-force fields are combined in product mode by default.
+
+---
+
+## Defining parameters (all the ways)
+
+- Constant value (used every request):
 ```bash
-python run.py --help-guide
+--param role="admin"
 ```
 
-This guide covers core concepts like:
--   **Payload Sources** (files, generated, constants)
--   **Targeting Fields** (body, headers, cookies)
--   **Combination Strategies** (product vs. zip)
--   **Advanced Features** like re-authentication and performance tuning.
-
----
-
-## License
-
-This project is licensed under the MIT License.
-````markdown
-# Brute Buddy
-
-Brute Buddy is a versatile and robust CLI for web app security testing. It makes complex brute-force scenarios simple: multi-field brute-forcing, dynamic payloads, and smart session handling for forms, APIs, headers, and cookies.
-
----
-
-## Quick start
-
-Try a basic login brute-force on a test endpoint. This finds a valid username from `users.txt` with a constant password.
-
+- Wordlist from file:
 ```bash
-# Create a dummy users.txt file
-echo "admin" > users.txt
-echo "user" >> users.txt
-echo "test" >> users.txt
+--param username=users.txt
+```
 
-# Run the attack
-python run.py https://httpbin.org/post \
-  --param username=users.txt \
-  --param password="password123" \
-  --include-text "password123" \
-  --threads 5
+- Generated values (chars:length):
+```bash
+--param code=generate:0123456789:6
+```
+
+- Target a header or cookie:
+```bash
+--param header:X-Api-Key=keys.txt
+--param cookie:session_id=sessions.txt
+# or shorthand for cookies
+--cookie session_id=sessions.txt
+```
+
+- Incrementing fields (use attempt counter as value):
+```bash
+--param increment:request_id
+--param increment:header:X-Request-ID
+--param increment:cookie:visit
 ```
 
 ---
 
-## Core concepts
+## Combining fields: product vs. zip
 
-### 1) Payload sources
+- Product (default): every combination.
+```bash
+--param username=users.txt --param password=passes.txt
+# Equivalent explicit form:
+--product-fields "username password"
+```
 
-Every field you test needs a payload source:
+- Zip: pair fields by index (line 1 with line 1, etc.).
+```bash
+--zip-fields "username,password"
+```
 
-- File: `--param username=users.txt` (one value per line)
-- Generated: `--param mfa_code=generate:0123456789:6` (all 6-digit codes)
-- Constant: `--param role="admin"`
+- Mix zip and product:
+```bash
+--zip-fields "username,password" --product-fields "mfa_code"
+```
 
-### 2) Targeting fields
-
-Add a prefix to target where the param goes:
-
-- Body/URL param (default): `--param username=users.txt`
-- Header: `--param header:X-API-Key=keys.txt`
-- Cookie: `--param cookie:session_id=sessions.txt` or `--cookie session_id=sessions.txt`
-
-### 3) Combination strategies
-
-- Product mode (default): try every combination. Use `--product-fields` to list fields (defaults to all brute-force fields).
-- Zip mode: pair values by index across fields. Use `--zip-fields` to list fields to zip.
-
----
-
-## Command-line options (friendly summary)
-
-### Parameters and payloads
-- `url`: Target URL (required)
-- `--param <key=source>`: Define a parameter. Repeatable.
-- `--cookie <name=source>`: Shorthand for `--param cookie:name=source`.
-- `--zip-fields <field1,field2>`: Comma-separated fields to zip.
-- `--product-fields <field1,field2>`: Comma-separated fields for product mode; defaults to all brute-force fields.
-- `--max-attempts <num>`: Stop after N attempts (0 = no limit).
-
-### Authentication
-- `--login-url <url>`: URL for re-authentication.
-- `--username <user>` / `--password <pass>`: Credentials for re-auth.
-- `--reauth <num>`: Re-authenticate after N consecutive failures.
-- `--auth-header <Key:Value>`: Extra header(s) for auth (repeatable).
-- `--auth-cookie-name <name>`: Session cookie name to extract (default: `session`).
-
-### Success criteria (first match wins)
-- `--include-text <text>`: Succeeds if text IS present.
-- `--exclude-text <text>`: Succeeds if text is NOT present.
-- Deprecated aliases still work with a notice: `--expect-text`, `--text`.
-- `--regex <pattern>`: Response matches regex.
-- `--code <code>`: HTTP status code matches.
-- `--length <len>`: Exact body length.
-- `--time <seconds>`: Response time >= value.
-
-### Performance
-- `--threads <num>`: Concurrent threads (default: 10).
-- `--delay <seconds>`: Delay between requests (default: 0).
-- `--retries <num>`: Adapter retries for HTTP 5xx, 429, etc. (default: 3).
-- `--per-payload-max-retries <num>`: Max re-queues on network errors (default: 5; 0 = unlimited).
-
-### Network
-- `--method <method>`: HTTP method (default: POST).
-- `--json-body`: Send parameters as JSON for POST/PUT/PATCH.
-- `--proxy-url <url>`: Proxy (e.g., http://127.0.0.1:8080).
-- `--insecure`: Skip TLS verification.
-- `--timeout <seconds>`: Request timeout (default: 10).
-
-### Output
-- `-v, --verbose`: Per-attempt logs.
-- `--output <file>`: Write successes (JSONL).
-- `--stop-on-success`: Stop after first success.
+Tips:
+- Field lists accept commas or spaces: `"a,b"` or `"a b"`.
+- If you use only constants (no wordlists/generators), use `--max-attempts` to limit attempts.
 
 ---
 
-## Examples
+## Success criteria (first match wins)
 
-1) Basic username/password brute-force
+Pick one or more. The first satisfied condition marks success.
+
+- Include text:
+```bash
+--include-text "Welcome"
+```
+
+- Exclude text:
+```bash
+--exclude-text "Invalid credentials"
+```
+
+- Regex match:
+```bash
+--regex "Success: [A-Z0-9]{6}"
+```
+
+- HTTP status code:
+```bash
+--code 200
+```
+
+- Exact length or minimum time:
+```bash
+--length 1234
+--time 0.8
+```
+
+Stop on first success and save results:
+```bash
+--stop-on-success --output hits.jsonl
+```
+
+---
+
+## Authentication & re-authentication
+
+When the target flow requires a session cookie that expires (e.g., MFA step), enable re-auth:
+
+```bash
+--reauth 100 \
+--login-url https://example.com/login \
+--username carlos \
+--password montoya \
+--auth-cookie-name session \
+--auth-header "Host: example.com"   # optional, repeatable
+```
+
+Notes:
+- The tool logs in via POST to `--login-url` with `username` and `password` form fields.
+- It extracts the cookie named by `--auth-cookie-name` (default: `session`) and applies it to all threads.
+- After `--reauth` consecutive failures, it re-authenticates automatically and refreshes the cookie.
+
+---
+
+## Networking
+
+- Methods and body format:
+```bash
+--method GET|POST|PUT|PATCH
+--json-body    # send JSON for POST/PUT/PATCH; otherwise form-encoded
+```
+
+- Proxy and TLS:
+```bash
+--proxy-url http://127.0.0.1:8080
+--insecure                  # skip TLS verification
+--timeout 10                # seconds per request
+```
+
+---
+
+## Performance & reliability
+
+- Concurrency and pacing:
+```bash
+--threads 10
+--delay 0.0
+```
+
+- Automatic retries:
+```bash
+--retries 3                 # HTTP 5xx/429 adapter retries
+--retry-backoff 0.2
+--per-payload-max-retries 5 # network errors; 0 = unlimited
+```
+
+---
+
+## Output
+
+- Verbose logs:
+```bash
+-v
+```
+
+- Write successes to JSONL file:
+```bash
+--output results.jsonl
+```
+
+- Stop after first success:
+```bash
+--stop-on-success
+```
+
+Each success record includes the payload, status, elapsed time, and response length.
+
+---
+
+## End-to-end examples
+
+1) Username/password brute-force (form POST)
 ```bash
 python run.py https://example.com/login \
   --param username=usernames.txt \
@@ -170,75 +239,8 @@ python run.py https://example.com/login \
   --include-text "Welcome" \
   --threads 10
 ```
-# Brute Buddy
 
-Brute Buddy is a versatile and robust CLI for web app security testing. It makes complex brute-force scenarios simple: multi-field brute-forcing, dynamic payloads, and smart session handling for forms, APIs, headers, and cookies.
-
----
-
-## Quick start
-
-Try a basic login brute-force on a test endpoint. This finds a valid username from `users.txt` with a constant password.
-
-```bash
-# Create a dummy users.txt file
-echo "admin" > users.txt
-echo "user" >> users.txt
-echo "test" >> users.txt
-
-# Run the attack
-python run.py https://httpbin.org/post \
-  --param username=users.txt \
-  --param password="password123" \
-  --include-text "password123" \
-  --threads 5
-```
-
----
-
-## Core concepts
-
-1) Payload sources
-- File: `--param username=users.txt` (one value per line)
-- Generated: `--param mfa_code=generate:0123456789:6` (all 6-digit codes)
-- Constant: `--param role="admin"`
-
-2) Targeting fields
-- Body/URL param (default): `--param username=users.txt`
-- Header: `--param header:X-API-Key=keys.txt`
-- Cookie: `--param cookie:session_id=sessions.txt` or `--cookie session_id=sessions.txt`
-
-3) Combination strategies
-- Product mode (default): try every combination. Use `--product-fields` to list fields (defaults to all brute-force fields).
-- Zip mode: pair values by index across fields. Use `--zip-fields` to list fields to zip.
-
----
-
-## Command-line options (friendly summary)
-
-See `python run.py --help` for the complete list, or `python run.py --help-guide` for an extended guide with examples.
-
-- Parameters and payloads: `--param`, `--cookie`, `--zip-fields`, `--product-fields`, `--max-attempts`
-- Authentication: `--login-url`, `--username`, `--password`, `--reauth`, `--auth-header`, `--auth-cookie-name`
-- Success criteria: `--include-text`, `--exclude-text`, `--regex`, `--code`, `--length`, `--time`
-- Performance: `--threads`, `--delay`, `--retries`, `--retry-backoff`, `--per-payload-max-retries`
-- Network: `--method`, `--json-body`, `--proxy-url`, `--insecure`, `--timeout`
-- Output: `--verbose`, `--output`, `--stop-on-success`
-
----
-
-## Examples
-
-1) Username/password brute-force
-```bash
-python run.py https://example.com/login \
-  --param username=usernames.txt \
-  --param password=passwords.txt \
-  --include-text "Welcome" \
-  --threads 10
-```
-
-2) Zipping usernames and passwords
+2) Zip username/password pairs
 ```bash
 python run.py https://example.com/login \
   --param username=users.txt \
@@ -247,15 +249,26 @@ python run.py https://example.com/login \
   --exclude-text "Invalid credentials"
 ```
 
-3) Header API key brute-force
+3) Header API key brute-force (GET)
 ```bash
-python run.py https://api.example.com/v1/user \
+python run.py https://api.example.com/v1/me \
   --method GET \
   --param header:X-Api-Key=keys.txt \
   --code 200
 ```
 
-4) Re-authentication + save output
+4) MFA: zip user/pass, product MFA codes
+```bash
+python run.py https://example.com/login-mfa \
+  --param username=users.txt \
+  --param password=passes.txt \
+  --param mfa_code=generate:0123456789:6 \
+  --zip-fields "username,password" \
+  --product-fields "mfa_code" \
+  --code 200
+```
+
+5) Re-authenticate every 100 failures and save hits
 ```bash
 python run.py https://example.com/mfa-check \
   --param code=generate:0123456789:6 \
@@ -263,30 +276,46 @@ python run.py https://example.com/mfa-check \
   --login-url https://example.com/login \
   --username "admin" --password "admin123" \
   --code 200 \
+  --stop-on-success \
   --output successful_codes.jsonl
 ```
 
----
-
-## Installation
-
-1) Python 3.10+
-2) Install dependencies:
+6) JSON body change-password request (with session cookie)
 ```bash
-pip install -r requirements.txt
-```
-3) Show help:
-```bash
-python run.py --help
+python run.py https://example.com/my-account/change-password \
+  --param username="carlos" \
+  --param current-password=pass.txt \
+  --param new-password-1="x" \
+  --param new-password-2="y" \
+  --json-body \
+  --cookie session=YOUR_SESSION_COOKIE \
+  --include-text "New passwords do not match"
 ```
 
+7) Add an incrementing request ID header on each attempt
+```bash
+python run.py https://example.com/login \
+  --param username=users.txt \
+  --param password=passes.txt \
+  --param increment:header:X-Request-ID \
+  --code 302
+```
+
 ---
 
-## Troubleshooting
+## Tips & troubleshooting
 
-- Proxy timeouts: adjust `--per-payload-max-retries`, `--retries`, and `--retry-backoff`.
-- With timeouts, verbose output may be delayed until attempts complete.
-- Try without a proxy and with a shorter `--timeout` to isolate issues.
+- Field lists accept commas or spaces.
+- For GET requests, body params are sent as URL query params.
+- If your payload files are huge, consider narrowing with `--zip-fields` where pairs are known.
+- Proxy timeouts: lower `--timeout`, reduce `--threads`, or increase `--per-payload-max-retries`.
+- If you only use constants, set `--max-attempts` to limit the run.
+
+---
+
+## Legal
+
+Use this tool responsibly and only against systems you’re authorized to test.
 
 ---
 
